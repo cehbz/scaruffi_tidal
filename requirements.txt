@@ -1,2 +1,5 @@
-tidalapi
+beautifulsoup4
+lxml
 pyyaml
+discogs_client
+tidalapi
