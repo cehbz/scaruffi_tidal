@@ -89,7 +89,10 @@ def publish_golden(golden_data: dict, realizer) -> str:
 def build_metadata(config: AppConfig):
     from .metadata.mirror import MirrorDB
     from .metadata.mb_mirror import MusicBrainzMetadata
-    return MusicBrainzMetadata(MirrorDB(config.musicbrainz_db, config.discogs_db))
+    from .metadata.discogs_mirror import DiscogsMetadata
+    from .metadata.composite import Metadata
+    db = MirrorDB(config.musicbrainz_db, config.discogs_db)
+    return Metadata(MusicBrainzMetadata(db), DiscogsMetadata(db))
 
 
 def build_realizer(config: AppConfig):
