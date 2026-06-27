@@ -49,3 +49,26 @@ def test_mb_cache_dir_is_under_cache_path(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     cfg = AppConfig.load(_write(tmp_path, "{}\n"))
     assert cfg.mb_cache_dir == tmp_path / "tidalist" / "mb"
+
+
+def test_mirrors_block_sets_db_paths(tmp_path):
+    p = _write(tmp_path, "mirrors:\n"
+                         "  musicbrainz_db: /custom/mb.db\n"
+                         "  discogs_db: /custom/dc.db\n")
+    cfg = AppConfig.load(p)
+    assert cfg.musicbrainz_db == "/custom/mb.db"
+    assert cfg.discogs_db == "/custom/dc.db"
+
+
+def test_mirrors_defaults_when_absent(tmp_path):
+    from tidalist.config import DEFAULT_MUSICBRAINZ_DB, DEFAULT_DISCOGS_DB
+    cfg = AppConfig.load(_write(tmp_path, "{}\n"))
+    assert cfg.musicbrainz_db == DEFAULT_MUSICBRAINZ_DB
+    assert cfg.discogs_db == DEFAULT_DISCOGS_DB
+
+
+def test_mirrors_defaults_when_file_missing(tmp_path):
+    from tidalist.config import DEFAULT_MUSICBRAINZ_DB, DEFAULT_DISCOGS_DB
+    cfg = AppConfig.load(tmp_path / "nope.yaml")
+    assert cfg.musicbrainz_db == DEFAULT_MUSICBRAINZ_DB
+    assert cfg.discogs_db == DEFAULT_DISCOGS_DB

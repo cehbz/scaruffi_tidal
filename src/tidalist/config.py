@@ -1,10 +1,14 @@
 """Single application configuration, loaded from one XDG YAML file."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+
+DEFAULT_MUSICBRAINZ_DB = "/Volumes/Crucial X10/musicbrainz/musicbrainz.db"
+DEFAULT_DISCOGS_DB = "/Volumes/Crucial X10/discogs/discogs.db"
 
 
 @dataclass(frozen=True)
@@ -13,6 +17,8 @@ class AppConfig:
     discogs_token: str | None = None
     discogs_rate_limit: int = 60
     musicbrainz_contact: str | None = None
+    musicbrainz_db: str = DEFAULT_MUSICBRAINZ_DB
+    discogs_db: str = DEFAULT_DISCOGS_DB
 
     @property
     def session_file(self) -> Path:
@@ -31,11 +37,14 @@ class AppConfig:
             data = yaml.safe_load(path.read_text()) or {}
         discogs = data.get("discogs") or {}
         musicbrainz = data.get("musicbrainz") or {}
+        mirrors = data.get("mirrors") or {}
         return cls(
             config_dir=path.parent,
             discogs_token=discogs.get("token"),
             discogs_rate_limit=discogs.get("rate_limit", 60),
             musicbrainz_contact=musicbrainz.get("contact"),
+            musicbrainz_db=mirrors.get("musicbrainz_db", DEFAULT_MUSICBRAINZ_DB),
+            discogs_db=mirrors.get("discogs_db", DEFAULT_DISCOGS_DB),
         )
 
 
