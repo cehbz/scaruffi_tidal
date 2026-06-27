@@ -36,3 +36,6 @@ htmlcov/
 # Project-specific
 notes.txt
 *.log
+
+# AI-generated design/plan artifacts (durable content lives in the KB / TODO.md)
+docs/superpowers/
