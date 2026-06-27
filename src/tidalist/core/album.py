@@ -30,4 +30,5 @@ class Album:
     ids: ExternalIds = ExternalIds()
     first_released: int | None = None
     traits: frozenset[ReleaseTrait] = frozenset()
+    styles: frozenset[str] = frozenset()
     tracklist: tuple[TrackRef, ...] = ()

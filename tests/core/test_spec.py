@@ -304,7 +304,8 @@ def test_album_entry_round_trips_with_external_ids():
                                   discogs_master_id=DiscogsMasterId(639224),
                                   discogs_release_id=DiscogsReleaseId(1234567),
                                   sources=frozenset({Source.MUSICBRAINZ, Source.DISCOGS})),
-                  first_released=1967)
+                  first_released=1967,
+                  styles=frozenset({"Folk Rock", "Blues Rock"}))
     entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
     golden = GoldenPlaylist("x", Brief("x", ()), (entry,))
     assert from_golden(to_golden(golden)) == golden
@@ -313,6 +314,7 @@ def test_album_entry_round_trips_with_external_ids():
     assert d["discogs_master_id"] == 639224
     assert d["discogs_release_id"] == 1234567
     assert d["sources"] == ["discogs", "musicbrainz"]
+    assert d["styles"] == ["Blues Rock", "Folk Rock"]
 
 
 def test_legacy_album_golden_without_discogs_keys_loads():

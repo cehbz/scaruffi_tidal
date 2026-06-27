@@ -35,6 +35,19 @@ def test_album_can_carry_multiple_traits():
     assert ReleaseTrait.LIVE in a.traits and ReleaseTrait.COMPILATION in a.traits
 
 
+# --- Slice 3 Task 1: album styles ---
+
+def test_album_carries_styles():
+    a = Album(artist="Traffic", title="John Barleycorn Must Die",
+              styles=frozenset({"Folk Rock"}))
+    assert a.styles == frozenset({"Folk Rock"})
+
+
+def test_album_styles_defaults_empty_frozenset():
+    a = Album(artist="Traffic", title="John Barleycorn Must Die")
+    assert a.styles == frozenset()
+
+
 # --- Phase 2 (edition-distance): TrackRef and Album.tracklist ---
 
 def test_trackref_constructs_and_compares_by_value():
