@@ -58,3 +58,39 @@ def test_albums_for_returns_rg_with_canonical_tracklist(tmp_path):
     assert a.tracklist[0].title == "Glad"
     assert a.tracklist[0].isrc == "GBUM71030667"
     assert a.tracklist[0].duration_s == 419
+    assert a.first_released == 1970
+
+
+def test_recordings_for_live_take_marks_performance_live(tmp_path):
+    from tidalist.metadata.mb_mirror import MusicBrainzMetadata
+    from tidalist.core.recording import Candidate, Performance
+    mb, dc = build_mirror_fixture(tmp_path)
+    recs = MusicBrainzMetadata(MirrorDB(mb, dc)).recordings_for(
+        Candidate("Traffic", "Pearly Queen"))
+    assert len(recs) == 1
+    assert recs[0].performance == Performance.LIVE
+
+
+def test_albums_for_sets_first_released(tmp_path):
+    from tidalist.metadata.mb_mirror import MusicBrainzMetadata
+    from tidalist.core.recording import Candidate
+    mb, dc = build_mirror_fixture(tmp_path)
+    albums = MusicBrainzMetadata(MirrorDB(mb, dc)).albums_for(
+        Candidate("Traffic", "John Barleycorn Must Die"))
+    assert len(albums) == 1
+    a = albums[0]
+    assert a.first_released == 1970
+    assert a.traits == frozenset()
+
+
+def test_albums_for_compilation_has_trait(tmp_path):
+    from tidalist.metadata.mb_mirror import MusicBrainzMetadata
+    from tidalist.core.recording import Candidate
+    from tidalist.core.album import ReleaseTrait
+    mb, dc = build_mirror_fixture(tmp_path)
+    albums = MusicBrainzMetadata(MirrorDB(mb, dc)).albums_for(
+        Candidate("Traffic", "Best of Traffic"))
+    assert len(albums) == 1
+    album = albums[0]
+    assert ReleaseTrait.COMPILATION in album.traits
+    assert album.tracklist == ()

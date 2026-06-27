@@ -35,7 +35,12 @@ def _build_mb(path: str) -> None:
         CREATE TABLE artist_credit_name(artist_credit INTEGER, position INTEGER,
                             artist INTEGER, name TEXT, join_phrase TEXT);
         CREATE TABLE recording(id INTEGER PRIMARY KEY, gid TEXT, name TEXT,
-                            artist_credit INTEGER, length INTEGER);
+                            artist_credit INTEGER, length INTEGER, comment TEXT);
+        CREATE TABLE release_group_meta(id INTEGER PRIMARY KEY,
+                            first_release_date_year INTEGER);
+        CREATE TABLE release_group_secondary_type(id INTEGER PRIMARY KEY, name TEXT);
+        CREATE TABLE release_group_secondary_type_join(release_group INTEGER,
+                            secondary_type INTEGER);
         CREATE TABLE isrc(id INTEGER PRIMARY KEY, recording INTEGER, isrc TEXT);
         CREATE TABLE release_group(id INTEGER PRIMARY KEY, gid TEXT, name TEXT,
                             artist_credit INTEGER, type INTEGER, discogs_master_id INTEGER);
@@ -64,7 +69,7 @@ def _build_mb(path: str) -> None:
     con.execute("INSERT INTO release_group_fts(rowid, title, artist_names) VALUES(60527, ?, 'Traffic')",
                 ("John Barleycorn Must Die",))
     for pos, rid, rgid, title, length, isrc in _TRACKS:
-        con.execute("INSERT INTO recording VALUES(?,?,?,9133,?)", (rid, rgid, title, length))
+        con.execute("INSERT INTO recording VALUES(?,?,?,9133,?,?)", (rid, rgid, title, length, ""))
         con.execute("INSERT INTO isrc(recording, isrc) VALUES(?,?)", (rid, isrc))
         con.execute("INSERT INTO track VALUES(?,?,?,1,?,?,?,9133,?)",
                     (rid, rgid + "-t", rid, pos, str(pos), title, length))
@@ -73,6 +78,37 @@ def _build_mb(path: str) -> None:
         con.execute("INSERT INTO canonical_musicbrainz_data(artist_credit_id, release_mbid, "
                     "recording_mbid, score) VALUES(9133, ?, ?, 100)",
                     (_REL[1], rgid))
+
+    # Secondary type reference rows
+    con.execute("INSERT INTO release_group_secondary_type VALUES(1, 'Compilation')")
+    con.execute("INSERT INTO release_group_secondary_type VALUES(6, 'Live')")
+
+    # release_group_meta for JBMD and compilation RG
+    con.execute("INSERT INTO release_group_meta VALUES(60527, 1970)")
+    con.execute("INSERT INTO release_group_meta VALUES(55885, 1976)")
+
+    # Standalone LIVE recording (no track/canonical rows — only for recordings_for)
+    con.execute(
+        "INSERT INTO recording VALUES(?,?,?,?,?,?)",
+        (9990001, "aaaa1111-0000-0000-0000-000000000001", "Pearly Queen", 9133, 300000,
+         "live, 1994: Woodstock"),
+    )
+    con.execute(
+        "INSERT INTO recording_fts(rowid, title, artist_names) VALUES(?,?,'Traffic')",
+        (9990001, "Pearly Queen"),
+    )
+
+    # Compilation release-group with no releases/tracks/canonical → empty tracklist
+    con.execute(
+        "INSERT INTO release_group VALUES(?,?,?,?,1,NULL)",
+        (55885, "bbbb2222-0000-0000-0000-000000000002", "Best of Traffic", 9133),
+    )
+    con.execute(
+        "INSERT INTO release_group_fts(rowid, title, artist_names) VALUES(?,?,'Traffic')",
+        (55885, "Best of Traffic"),
+    )
+    con.execute("INSERT INTO release_group_secondary_type_join VALUES(55885, 1)")
+
     con.commit()
     con.close()
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from ..core.album import Album, TrackRef
+import sqlite3
+
+from ..core.album import Album, ReleaseTrait, TrackRef
 from ..core.identifiers import ISRC, MBID, DiscogsMasterId, ExternalIds, Source
-from ..core.recording import Candidate, Credit, Recording
+from ..core.recording import Candidate, Credit, Performance, Recording
 from .mirror import MirrorDB
 
 
@@ -39,12 +41,15 @@ class MusicBrainzMetadata:
 
             title_match = _escape_fts(candidate.title)
             sql = """
-                SELECT rg.id, rg.gid, rg.name, rg.discogs_master_id
+                SELECT rg.id, rg.gid, rg.name, rg.discogs_master_id,
+                       rgm.first_release_date_year AS first_released
                 FROM release_group_fts f
                 JOIN release_group rg ON rg.id = f.rowid
                 JOIN artist_credit_name acn ON acn.artist_credit = rg.artist_credit
+                LEFT JOIN release_group_meta rgm ON rgm.id = rg.id
                 WHERE release_group_fts MATCH ?
                   AND acn.artist = ?
+                GROUP BY rg.id
                 ORDER BY rank
                 LIMIT ?
             """
@@ -52,9 +57,10 @@ class MusicBrainzMetadata:
 
             albums: list[Album] = []
             for row in rows:
+                rg_id = row["id"]
                 raw_dmid = row["discogs_master_id"]
                 discogs_master_id = DiscogsMasterId(raw_dmid) if raw_dmid is not None else None
-                tracklist = self._canonical_tracklist(con, row["id"])
+                tracklist = self._canonical_tracklist(con, rg_id)
                 albums.append(Album(
                     artist=candidate.artist,
                     title=row["name"],
@@ -63,7 +69,8 @@ class MusicBrainzMetadata:
                         discogs_master_id=discogs_master_id,
                         sources=frozenset({Source.MUSICBRAINZ}),
                     ),
-                    first_released=None,
+                    first_released=row["first_released"],
+                    traits=self._traits(con, rg_id),
                     tracklist=tracklist,
                 ))
             return albums
@@ -74,31 +81,32 @@ class MusicBrainzMetadata:
     # private helpers
     # ------------------------------------------------------------------
 
-    def _canonical_tracklist(self, con, release_group_id: int) -> tuple[TrackRef, ...]:
-        # Step 2: any recording gid on this release-group (all joins indexed)
-        row = con.execute("""
+    def _canonical_tracklist(self, con: sqlite3.Connection, release_group_id: int) -> tuple[TrackRef, ...]:
+        # Step 2: recording gids on this release-group, deterministic order
+        recording_rows = con.execute("""
             SELECT r.gid
             FROM release rel
             JOIN medium m ON m.release = rel.id
             JOIN track t ON t.medium = m.id
             JOIN recording r ON r.id = t.recording
             WHERE rel.release_group = ?
-            LIMIT 1
-        """, (release_group_id,)).fetchone()
-        if row is None:
+            ORDER BY m.position, t.position
+        """, (release_group_id,)).fetchall()
+        if not recording_rows:
             return ()
 
-        recording_gid = row["gid"]
-
-        # Step 3: canonical release_mbid for this recording (indexed entry point)
-        row = con.execute(
-            "SELECT release_mbid FROM canonical_musicbrainz_data WHERE recording_mbid = ?",
-            (recording_gid,),
-        ).fetchone()
-        if row is None:
+        # Step 3: find the first recording gid that has a canonical release entry
+        release_mbid: str | None = None
+        for rec_row in recording_rows:
+            row = con.execute(
+                "SELECT release_mbid FROM canonical_musicbrainz_data WHERE recording_mbid = ? LIMIT 1",
+                (rec_row["gid"],),
+            ).fetchone()
+            if row is not None:
+                release_mbid = row["release_mbid"]
+                break
+        if release_mbid is None:
             return ()
-
-        release_mbid = row["release_mbid"]
 
         # Step 4: ordered tracklist for the canonical release
         rows = con.execute("""
@@ -137,7 +145,16 @@ class MusicBrainzMetadata:
             ))
         return tuple(tracks)
 
-    def _resolve_artist(self, con, candidate: Candidate) -> int | None:
+    def _traits(self, con: sqlite3.Connection, rg_id: int) -> frozenset[ReleaseTrait]:
+        rows = con.execute("""
+            SELECT st.name FROM release_group_secondary_type_join j
+            JOIN release_group_secondary_type st ON st.id = j.secondary_type
+            WHERE j.release_group = ?
+        """, (rg_id,)).fetchall()
+        _map = {"Compilation": ReleaseTrait.COMPILATION, "Live": ReleaseTrait.LIVE}
+        return frozenset(_map[r["name"]] for r in rows if r["name"] in _map)
+
+    def _resolve_artist(self, con: sqlite3.Connection, candidate: Candidate) -> int | None:
         if candidate.artist_mbid:
             row = con.execute(
                 "SELECT id FROM artist WHERE gid = ?", (str(candidate.artist_mbid),)
@@ -151,10 +168,10 @@ class MusicBrainzMetadata:
         ).fetchone()
         return row["rowid"] if row else None
 
-    def _query_recordings(self, con, candidate: Candidate, artist_id: int) -> list[Recording]:
+    def _query_recordings(self, con: sqlite3.Connection, candidate: Candidate, artist_id: int) -> list[Recording]:
         title_match = "title:" + _escape_fts(candidate.title)
         sql = """
-            SELECT r.id, r.gid, r.name, r.length,
+            SELECT r.id, r.gid, r.name, r.length, r.comment,
                    GROUP_CONCAT(i.isrc, ', ') AS isrcs
             FROM recording_fts f
             JOIN recording r ON r.id = f.rowid
@@ -177,6 +194,12 @@ class MusicBrainzMetadata:
             if isrcs_raw:
                 first_isrc = ISRC(isrcs_raw.split(",")[0].strip())
 
+            performance = (
+                Performance.LIVE
+                if "live" in (row["comment"] or "").lower()
+                else Performance.UNKNOWN
+            )
+
             results.append(
                 Recording(
                     artist=candidate.artist,
@@ -184,6 +207,7 @@ class MusicBrainzMetadata:
                     mbid=MBID(row["gid"]),
                     isrc=first_isrc,
                     duration_s=duration_s,
+                    performance=performance,
                     credits=(Credit(candidate.artist, "performer"),),
                 )
             )
