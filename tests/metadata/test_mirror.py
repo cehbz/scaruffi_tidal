@@ -40,3 +40,21 @@ def test_recordings_for_unknown_artist_returns_empty(tmp_path):
     mb, dc = build_mirror_fixture(tmp_path)
     recs = MusicBrainzMetadata(MirrorDB(mb, dc)).recordings_for(Candidate("Nobody", "Glad"))
     assert recs == []
+
+
+def test_albums_for_returns_rg_with_canonical_tracklist(tmp_path):
+    from tidalist.metadata.mb_mirror import MusicBrainzMetadata
+    from tidalist.core.recording import Candidate
+    mb, dc = build_mirror_fixture(tmp_path)
+    albums = MusicBrainzMetadata(MirrorDB(mb, dc)).albums_for(
+        Candidate("Traffic", "John Barleycorn Must Die"))
+    assert len(albums) == 1
+    a = albums[0]
+    assert a.ids.mbid == "3770d5ce-e0e1-3389-9acf-cd38f0722baf"
+    assert a.ids.discogs_master_id == 69017
+    from tidalist.core.identifiers import Source
+    assert Source.MUSICBRAINZ in a.ids.sources
+    assert [t.position for t in a.tracklist] == [1, 2, 3, 4, 5, 6]
+    assert a.tracklist[0].title == "Glad"
+    assert a.tracklist[0].isrc == "GBUM71030667"
+    assert a.tracklist[0].duration_s == 419
