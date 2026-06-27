@@ -114,8 +114,55 @@ def _build_mb(path: str) -> None:
 
 
 def _build_discogs(path: str) -> None:
-    # Minimal valid DB so MirrorDB's ATTACH succeeds; Slice 3 adds master/release tables.
     con = sqlite3.connect(path)
-    con.execute("CREATE TABLE _placeholder(id INTEGER PRIMARY KEY)")
+    con.executescript("""
+        CREATE TABLE artist(id INTEGER PRIMARY KEY, name TEXT);
+        CREATE TABLE master(id INTEGER PRIMARY KEY, main_release_id INTEGER,
+                            title TEXT, year INTEGER, data_quality TEXT);
+        CREATE TABLE master_artist(master_id INTEGER, seq INTEGER, artist_id INTEGER,
+                                   anv TEXT, join_str TEXT, role TEXT,
+                                   PRIMARY KEY(master_id, seq));
+        CREATE TABLE master_genre(master_id INTEGER, seq INTEGER, genre TEXT NOT NULL,
+                                  PRIMARY KEY(master_id, seq));
+        CREATE TABLE master_style(master_id INTEGER, seq INTEGER, style TEXT NOT NULL,
+                                  PRIMARY KEY(master_id, seq));
+        CREATE TABLE release(id INTEGER PRIMARY KEY, master_id INTEGER, is_main_release INTEGER);
+        CREATE TABLE track(id INTEGER PRIMARY KEY, release_id INTEGER, seq INTEGER,
+                           position TEXT, title TEXT, duration TEXT);
+        CREATE VIRTUAL TABLE master_fts USING fts5(title, artist_names, content='');
+    """)
+
+    # Artist: Traffic
+    con.execute("INSERT INTO artist VALUES(271556, 'Traffic')")
+
+    # Master: John Barleycorn Must Die (69017)
+    con.execute("INSERT INTO master VALUES(69017, 583800, 'John Barleycorn Must Die', 1970, 'Correct')")
+    con.execute("INSERT INTO master_artist VALUES(69017, 1, 271556, '', '', '')")
+
+    # Genres and styles
+    con.execute("INSERT INTO master_genre VALUES(69017, 1, 'Rock')")
+    con.execute("INSERT INTO master_style VALUES(69017, 1, 'Folk Rock')")
+    con.execute("INSERT INTO master_style VALUES(69017, 2, 'Blues Rock')")
+    con.execute("INSERT INTO master_style VALUES(69017, 3, 'Prog Rock')")
+
+    # Main release
+    con.execute("INSERT INTO release VALUES(583800, 69017, 1)")
+
+    # Tracks for release 583800
+    _DC_TRACKS = [
+        (1, 583800, 1, "A1", "Glad",                 "6:32"),
+        (2, 583800, 2, "A2", "Freedom Rider",         "6:20"),
+        (3, 583800, 3, "A3", "Empty Pages",           "4:47"),
+        (4, 583800, 4, "B1", "Stranger To Himself",   "4:02"),
+        (5, 583800, 5, "B2", "John Barleycorn",       "6:20"),
+        (6, 583800, 6, "B3", "Every Mother's Son",    "7:05"),
+    ]
+    for row in _DC_TRACKS:
+        con.execute("INSERT INTO track VALUES(?,?,?,?,?,?)", row)
+
+    # FTS row (contentless — insert via special syntax)
+    con.execute("INSERT INTO master_fts(rowid, title, artist_names) VALUES(69017, ?, ?)",
+                ("John Barleycorn Must Die", "Traffic"))
+
     con.commit()
     con.close()

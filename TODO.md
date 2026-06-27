@@ -27,6 +27,8 @@ Active work only. Completed work is in git history; architecture/design in `docs
 - [ ] `num_tracks` coarse-shortlist (skip far-off editions' track fetches) was dropped; re-add if a discography is deep enough to matter.
 - [ ] Narrow `album_editions`' broad `except` (`tidal/platform.py`) if it ever masks a real bug.
 - [ ] `_track_matches` (ISRC-on-ref-absent-on-track -> title fallback) lacks a unit test.
+- [ ] Discogs track-level recording corroboration: build a track-title FTS in the cehbz/discogs mirror (we own it), then `DiscogsMetadata.recordings_for` can discover tracks by artist+title (a track has a `(release, position)` identity, no global recording id). Deferred until valuable.
+- [ ] Artist-first discovery: resolve the artist, then fuzzy-match the title within that artist's (bounded) discography, for title-variant recall. Both the MB and Discogs mirror adapters currently use title-FTS + artist filter.
 
 ## Other
 
