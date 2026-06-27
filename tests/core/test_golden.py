@@ -1,6 +1,7 @@
 import pytest
 
 from tidalist.core.recording import Candidate, Credit, Recording, Performance, Kind
+from tidalist.core.identifiers import MBID, ExternalIds
 from tidalist.core.album import Album
 from tidalist.core.criteria import PerformedBy, Studio, NotCompilation, NotLive
 from tidalist.core.brief import Brief
@@ -115,7 +116,7 @@ def test_curate_preserves_candidate_order():
 
 def _album(title="John Barleycorn Must Die", artist="Traffic",
            mbid="mb-alb-1", year=1970):
-    return Album(artist=artist, title=title, mbid=mbid, first_released=year)
+    return Album(artist=artist, title=title, ids=ExternalIds(mbid=mbid), first_released=year)
 
 
 def test_album_candidate_yields_album_golden_entry():
@@ -126,7 +127,7 @@ def test_album_candidate_yields_album_golden_entry():
     golden = curator.curate(_brief(), [candidate])
     entry = golden.entries[0]
     assert isinstance(entry.item, Album)
-    assert entry.item.mbid == "mb-alb-1"
+    assert entry.item.ids.mbid == "mb-alb-1"
     assert entry.verdict.admitted
 
 
@@ -151,7 +152,7 @@ def test_album_candidate_no_album_found_yields_rejected_album_entry():
     assert isinstance(entry.item, Album)
     assert entry.item.artist == "Traffic"
     assert entry.item.title == "The Low Spark"
-    assert entry.item.mbid is None
+    assert entry.item.ids.mbid is None
     assert not entry.verdict.admitted
     assert any("no album" in v.lower() for v in entry.verdict.violations)
 
@@ -174,12 +175,12 @@ def test_track_candidate_still_uses_recordings_path():
 
 def _comp_album(title="Greatest Hits", artist="Traffic"):
     from tidalist.core.album import ReleaseTrait
-    return Album(artist=artist, title=title, mbid="mb-comp", first_released=1975,
+    return Album(artist=artist, title=title, ids=ExternalIds(mbid="mb-comp"), first_released=1975,
                  traits=frozenset({ReleaseTrait.COMPILATION}))
 
 
 def _studio_album(title="John Barleycorn Must Die", artist="Traffic"):
-    return Album(artist=artist, title=title, mbid="mb-studio", first_released=1970,
+    return Album(artist=artist, title=title, ids=ExternalIds(mbid="mb-studio"), first_released=1970,
                  traits=frozenset())
 
 

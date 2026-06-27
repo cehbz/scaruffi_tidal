@@ -4,7 +4,7 @@ Criteria are a closed discriminated union (a `type` tag), so a front-end emits o
 known rule types, we validate by tag, and we never eval model output.
 """
 
-from .identifiers import ISRC, MBID
+from .identifiers import ISRC, MBID, ExternalIds, Source, DiscogsMasterId, DiscogsReleaseId
 from .recording import Candidate, Credit, Recording, Performance, Kind
 from .album import Album, TrackRef, ReleaseTrait
 from .criteria import PerformedBy, Studio, NotCompilation, NotLive, Criterion, Verdict
@@ -103,6 +103,14 @@ def _mbid(value):
     return MBID(value) if value is not None else None
 
 
+def _discogs_master_id(value):
+    return DiscogsMasterId(value) if value is not None else None
+
+
+def _discogs_release_id(value):
+    return DiscogsReleaseId(value) if value is not None else None
+
+
 def _trackref_to_dict(t: TrackRef) -> dict:
     return {"position": t.position, "title": t.title, "isrc": t.isrc,
             "mbid": t.mbid, "duration_s": t.duration_s}
@@ -129,11 +137,17 @@ def _golden_entry_to_dict(e: GoldenEntry) -> dict:
         prov_verdict["edition"] = _edition_to_dict(e.edition)
     if isinstance(e.item, Album):
         a = e.item
-        return {"kind": "album", "mbid": a.mbid, "artist": a.artist,
-                "title": a.title, "year": a.first_released,
-                "traits": sorted(t.value for t in a.traits),
-                "tracklist": [_trackref_to_dict(t) for t in a.tracklist],
-                **prov_verdict}
+        d = {"kind": "album", "mbid": a.ids.mbid, "artist": a.artist,
+             "title": a.title, "year": a.first_released,
+             "traits": sorted(t.value for t in a.traits),
+             "tracklist": [_trackref_to_dict(t) for t in a.tracklist]}
+        if a.ids.discogs_master_id is not None:
+            d["discogs_master_id"] = a.ids.discogs_master_id
+        if a.ids.discogs_release_id is not None:
+            d["discogs_release_id"] = a.ids.discogs_release_id
+        if a.ids.sources:
+            d["sources"] = sorted(s.value for s in a.ids.sources)
+        return {**d, **prov_verdict}
     r = e.item
     return {
         "kind": "track",
@@ -152,8 +166,14 @@ def _golden_entry_from_dict(d: dict) -> GoldenEntry:
     edition_raw = d.get("edition")
     edition = _edition_from_dict(edition_raw) if edition_raw is not None else None
     if d.get("kind", "track") == "album":
-        item = Album(artist=d["artist"], title=d["title"],
-                     mbid=_mbid(d.get("mbid")), first_released=d.get("year"),
+        ids = ExternalIds(
+            mbid=_mbid(d.get("mbid")),
+            discogs_master_id=_discogs_master_id(d.get("discogs_master_id")),
+            discogs_release_id=_discogs_release_id(d.get("discogs_release_id")),
+            sources=frozenset(Source(s) for s in d.get("sources", [])),
+        )
+        item = Album(artist=d["artist"], title=d["title"], ids=ids,
+                     first_released=d.get("year"),
                      traits=frozenset(ReleaseTrait(t) for t in d.get("traits", [])),
                      tracklist=tuple(_trackref_from_dict(t) for t in d.get("tracklist", [])))
     else:

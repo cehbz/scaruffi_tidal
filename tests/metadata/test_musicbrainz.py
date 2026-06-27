@@ -200,7 +200,7 @@ def _rg(rg_id="rg-1", title="John Barleycorn Must Die", frd="1970-07",
 
 
 def test_album_from_rg_maps_id_to_mbid():
-    assert album_from_release_group(_rg()).mbid == "rg-1"
+    assert album_from_release_group(_rg()).ids.mbid == "rg-1"
 
 
 def test_album_from_rg_maps_title():
@@ -247,7 +247,7 @@ def test_albums_for_maps_release_groups_to_albums():
                  release_groups=[_rg_credited("rg-1", "a-traffic", "Traffic")])
     albums = MusicBrainzMetadata(mb).albums_for(Candidate("Traffic", "John Barleycorn Must Die"))
     assert len(albums) == 1
-    assert albums[0].mbid == "rg-1"
+    assert albums[0].ids.mbid == "rg-1"
     assert albums[0].title == "John Barleycorn Must Die"
 
 
@@ -258,7 +258,7 @@ def test_albums_for_drops_rgs_not_credited_to_resolved_artist():
                      _rg_credited("rg-other", "a-other", "Other Artist"),
                  ])
     albums = MusicBrainzMetadata(mb).albums_for(Candidate("Traffic", "John Barleycorn Must Die"))
-    assert [a.mbid for a in albums] == ["rg-traffic"]
+    assert [a.ids.mbid for a in albums] == ["rg-traffic"]
 
 
 def test_albums_for_unfiltered_when_artist_unresolved():
@@ -333,7 +333,7 @@ def test_albums_for_uses_provided_artist_mbid_skipping_search_artists():
                           kind=Kind.ALBUM, artist_mbid=MBID("a-traffic"))
     albums = MusicBrainzMetadata(mb).albums_for(candidate)
     assert mb.search_artists_calls == 0
-    assert [a.mbid for a in albums] == ["rg-traffic"]
+    assert [a.ids.mbid for a in albums] == ["rg-traffic"]
 
 
 # --- _canonical_tracklist helpers ---

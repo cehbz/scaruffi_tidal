@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tidalist.core.identifiers import ISRC, MBID
+from tidalist.core.identifiers import ISRC, MBID, ExternalIds
 from tidalist.core.recording import Candidate, Credit, Recording, Performance, Kind
 from tidalist.core.album import Album, ReleaseTrait
 from tidalist.core.criteria import PerformedBy, Studio, NotCompilation, NotLive, Verdict
@@ -95,7 +95,7 @@ def test_golden_round_trips_album_and_track_entries():
                                   first_released=1970, performance=Performance.STUDIO),
                         Provenance("nl"), Verdict.ok())
     album = GoldenEntry(Album(artist="Traffic", title="John Barleycorn Must Die",
-                              mbid=MBID("rg1"), first_released=1970),
+                              ids=ExternalIds(mbid=MBID("rg1")), first_released=1970),
                         Provenance("nl", "whole album"), Verdict.ok())
     g = GoldenPlaylist("Winwood", brief, (track, album))
     assert from_golden(to_golden(g)) == g
@@ -144,7 +144,7 @@ def test_not_live_serializes_to_expected_dict():
 def test_golden_album_entry_round_trips_with_traits():
     brief = Brief("Winwood", ())
     album = Album(artist="Traffic", title="John Barleycorn Must Die",
-                  mbid=MBID("rg1"), first_released=1970,
+                  ids=ExternalIds(mbid=MBID("rg1")), first_released=1970,
                   traits=frozenset({ReleaseTrait.LIVE}))
     entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
     g = GoldenPlaylist("Winwood", brief, (entry,))
@@ -226,7 +226,7 @@ def test_golden_entry_edition_round_trips():
     pref = EditionPreference(markers=("steven wilson",), prefer_original=True)
     brief = Brief("x", ())
     album = Album(artist="Traffic", title="John Barleycorn Must Die",
-                  mbid=MBID("rg1"), first_released=1970)
+                  ids=ExternalIds(mbid=MBID("rg1")), first_released=1970)
     entry = GoldenEntry(album, Provenance("nl"), Verdict.ok(), edition=pref)
     g = GoldenPlaylist("x", brief, (entry,))
     result = from_golden(to_golden(g))
@@ -237,7 +237,7 @@ def test_golden_entry_edition_none_round_trips():
     """GoldenEntry without edition preference round-trips as None."""
     brief = Brief("x", ())
     album = Album(artist="Traffic", title="John Barleycorn Must Die",
-                  mbid=MBID("rg1"), first_released=1970)
+                  ids=ExternalIds(mbid=MBID("rg1")), first_released=1970)
     entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
     g = GoldenPlaylist("x", brief, (entry,))
     result = from_golden(to_golden(g))
@@ -256,7 +256,7 @@ def test_golden_album_entry_with_tracklist_round_trips():
     )
     brief = Brief("x", ())
     album = Album(artist="Traffic", title="John Barleycorn Must Die",
-                  mbid=MBID("rg1"), first_released=1970, tracklist=tracks)
+                  ids=ExternalIds(mbid=MBID("rg1")), first_released=1970, tracklist=tracks)
     entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
     g = GoldenPlaylist("x", brief, (entry,))
     result = from_golden(to_golden(g))
@@ -295,3 +295,35 @@ def test_golden_album_entry_missing_tracklist_key_loads_as_empty():
     }
     result = from_golden(d)
     assert result.entries[0].item.tracklist == ()  # type: ignore[union-attr]
+
+
+def test_album_entry_round_trips_with_external_ids():
+    from tidalist.core.identifiers import DiscogsMasterId, DiscogsReleaseId, Source
+    album = Album(artist="Traffic", title="Mr. Fantasy",
+                  ids=ExternalIds(mbid=MBID("rg-mf"),
+                                  discogs_master_id=DiscogsMasterId(639224),
+                                  discogs_release_id=DiscogsReleaseId(1234567),
+                                  sources=frozenset({Source.MUSICBRAINZ, Source.DISCOGS})),
+                  first_released=1967)
+    entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
+    golden = GoldenPlaylist("x", Brief("x", ()), (entry,))
+    assert from_golden(to_golden(golden)) == golden
+    d = to_golden(golden)["entries"][0]
+    assert d["mbid"] == "rg-mf"
+    assert d["discogs_master_id"] == 639224
+    assert d["discogs_release_id"] == 1234567
+    assert d["sources"] == ["discogs", "musicbrainz"]
+
+
+def test_legacy_album_golden_without_discogs_keys_loads():
+    legacy = {
+        "name": "x", "brief": {"criteria": []},
+        "entries": [{
+            "kind": "album", "mbid": "rg-old", "artist": "Traffic",
+            "title": "Mr. Fantasy", "year": 1967, "traits": [], "tracklist": [],
+            "provenance": {"source": "nl", "note": ""},
+            "verdict": {"admitted": True, "violations": []},
+        }],
+    }
+    album = from_golden(legacy).entries[0].item
+    assert album.ids == ExternalIds(mbid=MBID("rg-old"))

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .identifiers import ISRC, MBID
+from .identifiers import ISRC, MBID, ExternalIds
 
 
 class ReleaseTrait(StrEnum):
@@ -27,7 +27,7 @@ class Album:
     """Release-group identity + release traits + canonical tracklist."""
     artist: str
     title: str
-    mbid: MBID | None = None
+    ids: ExternalIds = ExternalIds()
     first_released: int | None = None
     traits: frozenset[ReleaseTrait] = frozenset()
     tracklist: tuple[TrackRef, ...] = ()

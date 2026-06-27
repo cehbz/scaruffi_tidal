@@ -9,6 +9,7 @@ release supplies edition-grade facts (album, year, live-or-not, release artists)
 import itertools
 
 from ..core.album import Album
+from ..core.identifiers import ExternalIds, Source
 from ..core.recording import Candidate, Credit, Recording, Performance
 from .rate_limit import MinInterval
 
@@ -51,7 +52,7 @@ def album_from_discogs(master, candidate: Candidate) -> Album:
     return Album(
         artist=candidate.artist,
         title=candidate.title,
-        mbid=None,
+        ids=ExternalIds(sources=frozenset({Source.DISCOGS})),
         first_released=_year(master),
     )
 

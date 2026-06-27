@@ -131,7 +131,7 @@ def test_album_from_discogs_title_from_candidate():
 
 
 def test_album_from_discogs_mbid_is_none():
-    assert album_from_discogs(_master(), CAND).mbid is None
+    assert album_from_discogs(_master(), CAND).ids.mbid is None
 
 
 def test_album_from_discogs_year_from_master():
@@ -144,7 +144,7 @@ def test_albums_for_maps_masters_to_albums():
     client = _FakeClient([_master(1970), _master(1971)])
     albums = DiscogsMetadata(client).albums_for(CAND)
     assert len(albums) == 2
-    assert all(a.mbid is None for a in albums)
+    assert all(a.ids.mbid is None for a in albums)
     assert albums[0].first_released == 1970
 
 

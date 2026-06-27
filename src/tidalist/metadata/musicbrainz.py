@@ -10,7 +10,7 @@ Callers must musicbrainzngs.set_useragent(...) before live use.
 import musicbrainzngs
 
 from ..core.album import Album, TrackRef, ReleaseTrait
-from ..core.identifiers import ISRC, MBID
+from ..core.identifiers import ISRC, MBID, ExternalIds, Source
 from ..core.recording import Candidate, Credit, Recording, Performance
 
 
@@ -33,7 +33,8 @@ def album_from_release_group(rg: dict, tracklist: tuple[TrackRef, ...] = ()) -> 
     return Album(
         artist=artist,
         title=rg["title"],
-        mbid=MBID(rg["id"]) if rg.get("id") else None,
+        ids=ExternalIds(mbid=MBID(rg["id"]) if rg.get("id") else None,
+                        sources=frozenset({Source.MUSICBRAINZ})),
         first_released=first_released,
         traits=_traits_from_mb(rg.get("secondary-type-list")),
         tracklist=tracklist,
