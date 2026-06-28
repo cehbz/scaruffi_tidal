@@ -1,5 +1,7 @@
 package core
 
+import "strings"
+
 type Role string
 
 const (
@@ -39,6 +41,30 @@ func (cs Credits) Names(role Role) []string {
 func (cs Credits) Has(role Role, name string) bool {
 	for _, c := range cs {
 		if c.Role == role && c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// performingRoles are the credit roles that count as performing a recording (as
+// opposed to composing or engineering it). PerformedBy matches against these.
+var performingRoles = map[Role]bool{
+	RoleArtist: true, RoleSoloist: true, RoleOrchestra: true,
+	RoleChorus: true, RoleConductor: true,
+}
+
+// Performs reports whether name appears among the performing-role credits, using
+// bidirectional case-insensitive substring matching (so "Tallis Scholars" matches
+// "The Tallis Scholars"). ToLower approximates Python casefold for ASCII names.
+func (cs Credits) Performs(name string) bool {
+	n := strings.ToLower(name)
+	for _, c := range cs {
+		if !performingRoles[c.Role] {
+			continue
+		}
+		cn := strings.ToLower(c.Name)
+		if strings.Contains(cn, n) || strings.Contains(n, cn) {
 			return true
 		}
 	}

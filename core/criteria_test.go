@@ -50,3 +50,40 @@ func TestJudgeAdmitsWhenClean(t *testing.T) {
 		t.Errorf("clean album should be admitted with no violations; got %+v", v)
 	}
 }
+
+func TestStudioRejectsLiveRecording(t *testing.T) {
+	c := Studio{}
+	if got := c.Violation(Recording{Title: "x", Performance: PerfLive}); got != "live recording" {
+		t.Errorf("Violation(live take) = %q, want %q", got, "live recording")
+	}
+	if got := c.Violation(Recording{Title: "x", Performance: PerfStudio}); got != "" {
+		t.Errorf("studio take must pass; got %q", got)
+	}
+	if got := c.Violation(Recording{Title: "x", Performance: PerfUnknown}); got != "" {
+		t.Errorf("unknown performance must pass (only explicit live fails); got %q", got)
+	}
+}
+
+func TestStudioNoOpOnAlbum(t *testing.T) {
+	if got := (Studio{}).Violation(Album{Title: "a"}); got != "" {
+		t.Errorf("Studio on an album must no-op; got %q", got)
+	}
+}
+
+func TestPerformedByRejectsCover(t *testing.T) {
+	c := PerformedBy{Name: "Traffic"}
+	cover := Recording{Title: "x", Credits: Credits{{Role: RoleArtist, Name: "Joe Cocker"}}}
+	if got := c.Violation(cover); got == "" {
+		t.Error("a recording not by the performer should be rejected as a likely cover")
+	}
+	by := Recording{Title: "x", Credits: Credits{{Role: RoleArtist, Name: "Traffic"}}}
+	if got := c.Violation(by); got != "" {
+		t.Errorf("a recording by the performer must pass; got %q", got)
+	}
+}
+
+func TestPerformedByNoOpOnAlbum(t *testing.T) {
+	if got := (PerformedBy{Name: "X"}).Violation(Album{Title: "a"}); got != "" {
+		t.Errorf("PerformedBy on an album must no-op; got %q", got)
+	}
+}

@@ -46,3 +46,19 @@ func TestCreditJSONRoundTrip(t *testing.T) {
 		t.Errorf("round-trip mismatch: %+v -> %s -> %+v", in, b, out)
 	}
 }
+
+func TestCreditsPerforms(t *testing.T) {
+	cs := Credits{
+		{Role: RoleOrchestra, Name: "The Tallis Scholars"},
+		{Role: RoleComposer, Name: "Palestrina"},
+	}
+	if !cs.Performs("Tallis Scholars") {
+		t.Error("a performing-role credit should match by bidirectional substring")
+	}
+	if cs.Performs("Palestrina") {
+		t.Error("composer is not a performing role")
+	}
+	if cs.Performs("The Beatles") {
+		t.Error("an absent name must not match")
+	}
+}

@@ -1,5 +1,7 @@
 package core
 
+import "fmt"
+
 // Verdict is the outcome of judging a GoldenItem against a set of criteria.
 type Verdict struct {
 	Admitted   bool     `json:"admitted"`
@@ -46,4 +48,34 @@ func Judge(item GoldenItem, criteria []Criterion) Verdict {
 		}
 	}
 	return Verdict{Admitted: len(violations) == 0, Violations: violations}
+}
+
+// Studio rejects a live recording. No-op on albums. Only an explicit live take
+// fails; studio and unknown pass.
+type Studio struct{}
+
+// PerformedBy requires Name to be among the recording's performing credits (so:
+// not a cover). No-op on albums.
+type PerformedBy struct {
+	Name string
+}
+
+// Violation reports "live recording" when the item is a live take.
+func (Studio) Violation(item GoldenItem) string {
+	if r, ok := item.(Recording); ok && r.Performance == PerfLive {
+		return "live recording"
+	}
+	return ""
+}
+
+// Violation reports a cover when Name is not among the recording's performing credits.
+func (c PerformedBy) Violation(item GoldenItem) string {
+	r, ok := item.(Recording)
+	if !ok {
+		return ""
+	}
+	if r.Credits.Performs(c.Name) {
+		return ""
+	}
+	return fmt.Sprintf("%s not in performer credits (likely a cover)", c.Name)
 }
