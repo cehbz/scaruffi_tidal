@@ -11,6 +11,7 @@ returns no TMR result it falls back to the full band name.
 """
 
 import pytest
+from pathlib import Path
 
 from tidalist.config import AppConfig
 from tidalist.core.recording import Candidate, Kind
@@ -23,19 +24,18 @@ _TMR_FULL = Candidate("Captain Beefheart & His Magic Band", "Trout Mask Replica"
 @pytest.mark.integration
 def test_trout_mask_replica_assembles_from_compilations_live():
     cfg = AppConfig.load()
-    if not cfg.musicbrainz_contact:
-        pytest.skip("no musicbrainz contact configured")
+    if not Path(cfg.musicbrainz_db).exists():
+        pytest.skip("mirror not mounted")
     if not cfg.session_file.exists():
         pytest.skip("no Tidal session cached")
 
-    import musicbrainzngs
-    from tidalist.metadata.musicbrainz import MusicBrainzMetadata
+    from tidalist.metadata.mirror import MirrorDB
+    from tidalist.metadata.mb_mirror import MusicBrainzMetadata
     from tidalist.tidal.session import authenticate
     from tidalist.tidal.platform import TidalPlatform
     from tidalist.realize.tidal import TidalRealizer
 
-    musicbrainzngs.set_useragent("tidalist", "1.0", cfg.musicbrainz_contact)
-    provider = MusicBrainzMetadata(musicbrainzngs)
+    provider = MusicBrainzMetadata(MirrorDB(cfg.musicbrainz_db, cfg.discogs_db))
 
     # "Captain Beefheart" alone doesn't surface TMR in MusicBrainz; the correct
     # credited artist is "Captain Beefheart & His Magic Band".

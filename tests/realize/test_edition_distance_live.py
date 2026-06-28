@@ -7,6 +7,7 @@ one nearest the golden tracklist — the original. This is the exact case surfac
 during review (tidal.com/album/639224, the 10-track edition, vs the 22-track deluxe).
 """
 import pytest
+from pathlib import Path
 
 from tidalist.config import AppConfig
 from tidalist.core.recording import Candidate, Kind
@@ -18,21 +19,20 @@ _MR_FANTASY = Candidate("Traffic", "Mr. Fantasy", kind=Kind.ALBUM)
 @pytest.mark.integration
 def test_mr_fantasy_resolves_to_the_original_not_the_deluxe_live():
     cfg = AppConfig.load()
-    if not cfg.musicbrainz_contact:
-        pytest.skip("no musicbrainz contact configured")
+    if not Path(cfg.musicbrainz_db).exists():
+        pytest.skip("mirror not mounted")
     if not cfg.session_file.exists():
         pytest.skip("no Tidal session cached")
 
-    import musicbrainzngs
-    from tidalist.metadata.musicbrainz import MusicBrainzMetadata
+    from tidalist.metadata.mirror import MirrorDB
+    from tidalist.metadata.mb_mirror import MusicBrainzMetadata
     from tidalist.tidal.session import authenticate
     from tidalist.tidal.platform import TidalPlatform
     from tidalist.realize.tidal import TidalRealizer
 
     # Curate: the golden Album gains MB's canonical tracklist (the standard edition,
     # NOT the 22-track deluxe outlier).
-    musicbrainzngs.set_useragent("tidalist", "1.0", cfg.musicbrainz_contact)
-    albums = MusicBrainzMetadata(musicbrainzngs).albums_for(_MR_FANTASY)
+    albums = MusicBrainzMetadata(MirrorDB(cfg.musicbrainz_db, cfg.discogs_db)).albums_for(_MR_FANTASY)
     assert albums, "expected release-groups for Mr. Fantasy"
     album = next((a for a in albums if a.title == "Mr. Fantasy"), albums[0])
     assert 8 <= len(album.tracklist) <= 14, \
