@@ -5,8 +5,8 @@ package core
 type Kind string
 
 const (
-	KindAlbum Kind = "album"
-	KindTrack Kind = "track"
+	KindAlbum     Kind = "album"
+	KindRecording Kind = "recording"
 )
 
 // GoldenItem is the golden unit: an Album or a Recording. Type-aware behavior
@@ -16,4 +16,4 @@ type GoldenItem interface {
 }
 
 func (Album) Kind() Kind     { return KindAlbum }
-func (Recording) Kind() Kind { return KindTrack }
+func (Recording) Kind() Kind { return KindRecording }
