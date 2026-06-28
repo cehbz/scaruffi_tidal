@@ -123,20 +123,6 @@ wheels = [
 ]
 
 [[package]]
-name = "discogs-client"
-version = "2.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "oauthlib" },
-    { name = "requests" },
-    { name = "six" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/25/466ceb79d1da1f064765eceab842dbd35a1b7fb2e8f6be75d977bc0dda67/discogs-client-2.3.0.tar.gz", hash = "sha256:cc979fcbb5283f74d388c7111c8ed6bef920b01614a014d6b1c5d6fbb554bfc3", size = 24716, upload-time = "2020-06-01T21:38:27.636Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/02/451c0bf1acc95f7c529e58aea830dd90f08a787dc19c712e377e2de26b54/discogs_client-2.3.0-py3-none-any.whl", hash = "sha256:7e91f62a1bfee802e155d1f7c543e47fb5ef158d099e90e6b28f5e44a1f41d94", size = 13154, upload-time = "2020-06-01T21:38:26.463Z" },
-]
-
-[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -170,24 +156,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/48/10/fc39d56bce11d703617435a47843c7c33fa0f84635c6136279c9f73ecd5b/mpegdash-0.4.1.tar.gz", hash = "sha256:e31d81e1f0184cc456553ef2a4a1de1c662972b8ce04b687c1854180912759e6", size = 12665, upload-time = "2026-01-18T23:58:00.28Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/a0/7a2734a7d734d81b6627ac1c470ce388f5a80e5669d9803a5c3c179ca84f/mpegdash-0.4.1-py3-none-any.whl", hash = "sha256:788e559b73acbf9175422548c58a4c441486c0ce0633fa10f77097bfffeaad4d", size = 11009, upload-time = "2026-01-18T23:57:59.011Z" },
-]
-
-[[package]]
-name = "musicbrainzngs"
-version = "0.7.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0a/67/3e74ae93d90ceeba72ed1a266dd3ca9abd625f315f0afd35f9b034acedd1/musicbrainzngs-0.7.1.tar.gz", hash = "sha256:ab1c0100fd0b305852e65f2ed4113c6de12e68afd55186987b8ed97e0f98e627", size = 117469, upload-time = "2020-01-11T17:38:47.581Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/fd/cef7b2580436910ccd2f8d3deec0f3c81743e15c0eb5b97dde3fbf33c0c8/musicbrainzngs-0.7.1-py2.py3-none-any.whl", hash = "sha256:e841a8f975104c0a72290b09f59326050194081a5ae62ee512f41915090e1a10", size = 25289, upload-time = "2020-01-11T17:38:45.469Z" },
-]
-
-[[package]]
-name = "oauthlib"
-version = "3.3.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0b/5f/19930f824ffeb0ad4372da4812c50edbd1434f678c90c2733e1188edfc63/oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9", size = 185918, upload-time = "2025-06-19T22:48:08.269Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1", size = 160065, upload-time = "2025-06-19T22:48:06.508Z" },
 ]
 
 [[package]]
@@ -369,8 +337,6 @@ version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
-    { name = "discogs-client" },
-    { name = "musicbrainzngs" },
     { name = "pyyaml" },
     { name = "tidalapi" },
 ]
@@ -383,8 +349,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
-    { name = "discogs-client", specifier = ">=2.3.0" },
-    { name = "musicbrainzngs", specifier = ">=0.7.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tidalapi", specifier = ">=0.7.0" },
 ]

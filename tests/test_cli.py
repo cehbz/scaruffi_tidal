@@ -52,7 +52,7 @@ def _realizer():
 
 
 def _cfg(tmp_path):
-    return AppConfig(config_dir=tmp_path, musicbrainz_contact="test@example.com")
+    return AppConfig(config_dir=tmp_path)
 
 
 # --- formatters --------------------------------------------------------------
