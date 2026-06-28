@@ -1,0 +1,47 @@
+package main
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestFindRecordingCommandEmitsJSON(t *testing.T) {
+	mb, dc := writeFixtureDBs(t)
+	out, err := runCmd(t, "find-recording", "--title", "Dear Mr. Fantasy",
+		"--credit", "artist:Traffic", "--isrc", "GBABC1234567",
+		"--musicbrainz-db", mb, "--discogs-db", dc)
+	if err != nil {
+		t.Fatalf("execute: %v (out=%s)", err, out)
+	}
+	var got struct {
+		Candidates []struct {
+			MBID  string `json:"mbid"`
+			ISRC  string `json:"isrc"`
+			Match struct {
+				ArtistConfirmed *bool `json:"artist_confirmed"`
+				ISRCExact       *bool `json:"isrc_exact"`
+			} `json:"match"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not candidates JSON: %v\n%s", err, out)
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].MBID != "r-dmf" {
+		t.Fatalf("candidates = %+v", got.Candidates)
+	}
+	if got.Candidates[0].Match.ArtistConfirmed == nil || !*got.Candidates[0].Match.ArtistConfirmed {
+		t.Error("expected artist_confirmed=true")
+	}
+	if got.Candidates[0].Match.ISRCExact == nil || !*got.Candidates[0].Match.ISRCExact {
+		t.Error("expected isrc_exact=true")
+	}
+}
+
+func TestFindRecordingCommandRejectsBadCredit(t *testing.T) {
+	mb, dc := writeFixtureDBs(t)
+	_, err := runCmd(t, "find-recording", "--title", "X", "--credit", "bogus:Y",
+		"--musicbrainz-db", mb, "--discogs-db", dc)
+	if err == nil {
+		t.Error("an unknown credit role must fail the command")
+	}
+}
