@@ -27,7 +27,7 @@ def test_composite_albums_for_jbmd_reconciles():
     assert albums, "expected at least one album"
     top = albums[0]
     assert top.ids.mbid is not None, "expected mbid from MusicBrainz"
-    assert top.ids.discogs_master_id is not None, "expected discogs_master_id from Discogs"
+    assert top.ids.discogs_master_id == 69017, "expected Discogs master id 69017"
     assert Source.MUSICBRAINZ in top.ids.sources
     assert Source.DISCOGS in top.ids.sources
     assert len(top.tracklist) > 0, "expected non-empty tracklist"

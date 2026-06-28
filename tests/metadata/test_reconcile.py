@@ -201,7 +201,6 @@ def test_mb_first_then_dc_order():
 # (d) first_released: MB preferred, Discogs fills when MB None
 
 def test_first_released_mb_preferred():
-    mb = _mb_album(first_released=1980)
     dc = _dc_album(
         ids=ExternalIds(
             discogs_master_id=DiscogsMasterId(69017),

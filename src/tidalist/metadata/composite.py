@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..core.album import Album
+from ..core.ports import MetadataProvider
 from ..core.recording import Candidate, Recording
 from .reconcile import reconcile_albums
 
@@ -10,7 +11,7 @@ from .reconcile import reconcile_albums
 class Metadata:
     """Composite MetadataProvider over two peer providers; reconciles album results."""
 
-    def __init__(self, mb, discogs) -> None:
+    def __init__(self, mb: MetadataProvider, discogs: MetadataProvider) -> None:
         self._mb = mb
         self._discogs = discogs
 

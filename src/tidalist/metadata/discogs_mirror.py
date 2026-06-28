@@ -85,9 +85,9 @@ class DiscogsMetadata:
         rows = con.execute("""
             SELECT genre AS value FROM dc.master_genre WHERE master_id = ?
             UNION ALL
-            SELECT style FROM dc.master_style WHERE master_id = ?
+            SELECT style AS value FROM dc.master_style WHERE master_id = ?
         """, (master_id, master_id)).fetchall()
-        return frozenset(row[0] for row in rows)
+        return frozenset(row["value"] for row in rows)
 
     def _tracklist(self, con: sqlite3.Connection, main_release_id: int) -> tuple[TrackRef, ...]:
         if main_release_id is None:

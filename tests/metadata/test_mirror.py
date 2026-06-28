@@ -94,3 +94,12 @@ def test_albums_for_compilation_has_trait(tmp_path):
     album = albums[0]
     assert ReleaseTrait.COMPILATION in album.traits
     assert album.tracklist == ()
+
+
+def test_mirrordb_connects_with_spaced_path(tmp_path):
+    d = tmp_path / "a b"
+    d.mkdir()
+    mb, dc = build_mirror_fixture(d)
+    con = MirrorDB(mb, dc).connect()
+    assert con.execute("SELECT name FROM artist WHERE id=9133").fetchone()[0] == "Traffic"
+    con.close()
