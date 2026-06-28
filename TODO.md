@@ -16,8 +16,8 @@ Active work only. Completed work is in git history; architecture/design in `docs
 - [ ] Dedup: drop a track whose recording is already on an album in the same playlist.
 - [ ] `performed_by(member)` over-rejects band recordings credited to the group; needs band-membership / MB relationship awareness, not a performer-credit string match.
 - [ ] Recording selection sometimes picks a later re-recording (e.g. "I'm a Man" -> 1988); prefer the original.
-- [ ] Per-artist caching: memoize artist-MBID resolution and the discography per run.
-- [ ] Local backends: a local MusicBrainz/Discogs mirror (removes the 1 req/s curate throttle) and a local-file realizer / persistent Tidal lookup cache.
+- [ ] Per-run caching: memoize the Tidal discography per artist (MB artist resolution is now a fast local mirror query, so less pressing).
+- [ ] Local-file realizer (VLC / local files) and a persistent Tidal lookup cache. (The local MB/Discogs SQLite mirrors are done.)
 
 ## Metadata / edition reliability
 
@@ -35,4 +35,4 @@ Active work only. Completed work is in git history; architecture/design in `docs
 ## Other
 
 - [ ] Golden JSON back-compat reader (`traits` else legacy `secondary_types`) — only if external pre-`ReleaseTrait` golden files need to load.
-- [ ] Integration tests for remaining live shapes: MB `search_recordings`/`recordings_for`, the recording `resolve`/`emit` path, Discogs result shapes.
+- [ ] Integration test for the recording `resolve`/`emit` realize path. (The MB/Discogs HTTP-shape tests are obsolete; the mirrors have their own live tests.)
