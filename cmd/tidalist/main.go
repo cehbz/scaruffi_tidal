@@ -19,6 +19,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().String("musicbrainz-db", envOr("TIDALIST_MUSICBRAINZ_DB", defaultMBDB), "MusicBrainz mirror path")
 	root.PersistentFlags().String("discogs-db", envOr("TIDALIST_DISCOGS_DB", defaultDCDB), "Discogs mirror path")
 	root.AddCommand(newResolveArtistCmd())
+	root.AddCommand(newResolveWorkCmd())
 	root.AddCommand(newFindRecordingCmd())
 	root.AddCommand(newFindAlbumCmd())
 	root.AddCommand(newTracklistCmd())

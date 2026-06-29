@@ -37,6 +37,26 @@ func TestFindRecordingCommandEmitsJSON(t *testing.T) {
 	}
 }
 
+func TestFindRecordingCommandByWork(t *testing.T) {
+	mb, dc := writeFixtureDBs(t)
+	out, err := runCmd(t, "find-recording", "--work", "Missa Papae Marcelli",
+		"--musicbrainz-db", mb, "--discogs-db", dc)
+	if err != nil {
+		t.Fatalf("execute: %v (out=%s)", err, out)
+	}
+	var got struct {
+		Candidates []struct {
+			MBID string `json:"mbid"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not candidates JSON: %v\n%s", err, out)
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].MBID != "r-kyrie" {
+		t.Fatalf("candidates = %+v", got.Candidates)
+	}
+}
+
 func TestFindRecordingCommandRejectsBadCredit(t *testing.T) {
 	mb, dc := writeFixtureDBs(t)
 	_, err := runCmd(t, "find-recording", "--title", "X", "--credit", "bogus:Y",
