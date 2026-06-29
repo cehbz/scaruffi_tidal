@@ -21,6 +21,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newResolveArtistCmd())
 	root.AddCommand(newFindRecordingCmd())
 	root.AddCommand(newFindAlbumCmd())
+	root.AddCommand(newTracklistCmd())
 	return root
 }
 
