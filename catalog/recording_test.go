@@ -91,3 +91,34 @@ func TestFindRecordingByArtistMBID(t *testing.T) {
 		t.Error("ArtistConfirmed should be non-nil and true when ArtistMBID resolved")
 	}
 }
+
+func TestFindRecordingByWork(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.FindRecording(RecordingQuery{Work: "Missa Papae Marcelli", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 recording of the work, got %d", len(got))
+	}
+	if got[0].MBID != "r-kyrie" {
+		t.Errorf("MBID = %q, want r-kyrie", got[0].MBID)
+	}
+	if got[0].ISRC != "GBCLASSICAL01" {
+		t.Errorf("ISRC = %q, want GBCLASSICAL01", got[0].ISRC)
+	}
+	if got[0].DurationS != 360 {
+		t.Errorf("DurationS = %d, want 360", got[0].DurationS)
+	}
+}
+
+func TestFindRecordingByWorkUnresolvedEmpty(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.FindRecording(RecordingQuery{Work: "Nonexistent Work", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("an unresolved work must yield no recordings; got %d", len(got))
+	}
+}
