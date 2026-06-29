@@ -97,7 +97,7 @@ var mbStmts = []string{
 	`INSERT INTO artist (id, gid, name, comment) VALUES (3, 'a-palestrina', 'Palestrina', '')`,
 	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES (30, 'r-kyrie', 'Kyrie', 360000, '', 1)`,
 	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (1, 1, 30, 300, 0)`, // recording 30 performs work 300
-	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (1, 2, 3, 300, 0)`,      // artist 3 (Palestrina) composes work 300
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (1, 2, 3, 300, 0)`,     // artist 3 (Palestrina) composes work 300
 	`INSERT INTO isrc (recording, isrc) VALUES (30, 'GBCLASSICAL01')`,
 	// --- edition tables (slice 2c) ---
 	`CREATE TABLE release_country (release INTEGER, country INTEGER, date_year INTEGER, date_month INTEGER, date_day INTEGER)`,
