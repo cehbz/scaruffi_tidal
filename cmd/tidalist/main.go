@@ -46,9 +46,18 @@ func emitJSON(cmd *cobra.Command, v any) error {
 	return nil
 }
 
+// errorJSON renders err as a one-line JSON object {"error":"…"} (valid for any input).
+func errorJSON(err error) string {
+	b, e := json.Marshal(map[string]string{"error": err.Error()})
+	if e != nil {
+		return `{"error":"internal error"}`
+	}
+	return string(b)
+}
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, `{"error":%q}`+"\n", err.Error())
+		fmt.Fprintln(os.Stderr, errorJSON(err))
 		os.Exit(1)
 	}
 }

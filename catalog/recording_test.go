@@ -53,3 +53,41 @@ func TestFindRecordingISRCExact(t *testing.T) {
 		t.Error("isrc_exact should be true when the requested ISRC matches")
 	}
 }
+
+func TestFindRecordingUnresolvedArtistReturnsEmpty(t *testing.T) {
+	m := newTestMirror(t)
+
+	got, err := m.FindRecording(RecordingQuery{Title: "Dear Mr. Fantasy", ArtistName: "Nonexistent Band", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unresolved ArtistName should yield 0 candidates; got %d", len(got))
+	}
+
+	got, err = m.FindRecording(RecordingQuery{Title: "Dear Mr. Fantasy", ArtistMBID: "bogus-gid", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unresolved ArtistMBID should yield 0 candidates; got %d", len(got))
+	}
+}
+
+func TestFindRecordingByArtistMBID(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.FindRecording(RecordingQuery{Title: "Dear Mr. Fantasy", ArtistMBID: "a-traffic", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ArtistMBID filter should yield exactly 1 candidate; got %d", len(got))
+	}
+	c := got[0]
+	if c.MBID != "r-dmf" {
+		t.Errorf("MBID = %q, want r-dmf", c.MBID)
+	}
+	if c.Match.ArtistConfirmed == nil || !*c.Match.ArtistConfirmed {
+		t.Error("ArtistConfirmed should be non-nil and true when ArtistMBID resolved")
+	}
+}

@@ -45,6 +45,12 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error)
 		artistID, confirmed = id, ok
 	}
 
+	// If an artist was requested but did not resolve, return no candidates.
+	artistRequested := q.ArtistMBID != "" || q.ArtistName != ""
+	if artistRequested && !confirmed {
+		return nil, nil
+	}
+
 	var rows *sql.Rows
 	var err error
 	if confirmed {
