@@ -32,6 +32,11 @@ func Open(mbPath, dcPath string) (*MirrorDB, error) {
 		db.Close()
 		return nil, fmt.Errorf("attach discogs: %w", err)
 	}
+	// ATTACH is per-connection, but *sql.DB is a pool; cap it at one connection
+	// so every query sees the attached `dc` database. (Read-only single-shot CLI:
+	// no concurrency lost. Callers must drain a rows cursor before issuing a
+	// sub-query on the same MirrorDB — one connection cannot serve both at once.)
+	db.SetMaxOpenConns(1)
 	return &MirrorDB{DB: db}, nil
 }
 
