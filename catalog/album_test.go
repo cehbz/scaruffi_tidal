@@ -1,6 +1,10 @@
 package catalog
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cehbz/tidalist/core"
+)
 
 func TestFindAlbumMBByArtist(t *testing.T) {
 	m := newTestMirror(t)
@@ -101,5 +105,80 @@ func TestFindAlbumUnresolvedArtistEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("a requested-but-unresolved artist must yield no MB candidates; got %d", len(got))
+	}
+}
+
+// bySource returns the first candidate from each source ("" if absent), guarding
+// against empty Sources slices.
+func bySource(cands []AlbumCandidate) (mb, dc *AlbumCandidate) {
+	for i := range cands {
+		if len(cands[i].Sources) == 0 {
+			continue
+		}
+		switch cands[i].Sources[0] {
+		case core.SourceMusicBrainz:
+			mb = &cands[i]
+		case core.SourceDiscogs:
+			dc = &cands[i]
+		}
+	}
+	return mb, dc
+}
+
+// TestFindAlbumByArtistMBID exercises the artist-MBID branch: the MB lookup
+// resolves the gid → artist id, and the Discogs lookup resolves the gid → name.
+// Both peers must come back, and the MB candidate must be artist-confirmed.
+func TestFindAlbumByArtistMBID(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.FindAlbum(AlbumQuery{Title: "John Barleycorn Must Die", ArtistMBID: "a-traffic", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mb, dc := bySource(got)
+	if mb == nil || dc == nil {
+		t.Fatalf("expected one MB and one Discogs candidate (peers), got %d: %+v", len(got), got)
+	}
+	if mb.MBID != "rg-jbmd" {
+		t.Errorf("MB MBID = %q, want rg-jbmd", mb.MBID)
+	}
+	if dc.DiscogsMasterID != 69017 {
+		t.Errorf("Discogs master id = %d, want 69017", dc.DiscogsMasterID)
+	}
+	if mb.Match.ArtistConfirmed == nil || !*mb.Match.ArtistConfirmed {
+		t.Error("MB candidate artist_confirmed should be true")
+	}
+}
+
+// TestFindAlbumUnresolvedArtistMBIDEmpty: an unknown artist gid resolves in
+// neither mirror (MB: gid not found; Discogs: name lookup ErrNoRows), so there
+// are no candidates.
+func TestFindAlbumUnresolvedArtistMBIDEmpty(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.FindAlbum(AlbumQuery{Title: "John Barleycorn Must Die", ArtistMBID: "bogus-gid", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("an unresolvable artist MBID must yield no candidates; got %d: %+v", len(got), got)
+	}
+}
+
+// TestFindAlbumTitleOnly: with no artist requested, both peers come back as
+// title-only matches and neither carries an artist_confirmed signal.
+func TestFindAlbumTitleOnly(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.FindAlbum(AlbumQuery{Title: "John Barleycorn Must Die", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mb, dc := bySource(got)
+	if mb == nil || dc == nil {
+		t.Fatalf("expected one MB and one Discogs candidate (peers), got %d: %+v", len(got), got)
+	}
+	if mb.Match.ArtistConfirmed != nil {
+		t.Errorf("MB candidate artist_confirmed should be unset (nil); got %v", *mb.Match.ArtistConfirmed)
+	}
+	if dc.Match.ArtistConfirmed != nil {
+		t.Errorf("Discogs candidate artist_confirmed should be unset (nil); got %v", *dc.Match.ArtistConfirmed)
 	}
 }

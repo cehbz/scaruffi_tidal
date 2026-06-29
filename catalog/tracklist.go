@@ -50,24 +50,16 @@ func (m *MirrorDB) TracklistByReleaseGroup(rgGID string) ([]Track, error) {
 	if err != nil {
 		return nil, err
 	}
-	var recGIDs []string
+	defer rows.Close()
 	for rows.Next() {
-		var g string
-		if err := rows.Scan(&g); err != nil {
-			rows.Close()
+		var recGID string
+		if err := rows.Scan(&recGID); err != nil {
 			return nil, err
 		}
-		recGIDs = append(recGIDs, g)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for _, rg := range recGIDs {
 		var releaseGID string
 		err := m.DB.QueryRow(
 			`SELECT release_mbid FROM canonical_musicbrainz_data WHERE recording_mbid = ? LIMIT 1`,
-			rg).Scan(&releaseGID)
+			recGID).Scan(&releaseGID)
 		if err == sql.ErrNoRows {
 			continue
 		}
@@ -76,7 +68,7 @@ func (m *MirrorDB) TracklistByReleaseGroup(rgGID string) ([]Track, error) {
 		}
 		return m.tracklistByRelease(releaseGID)
 	}
-	return nil, nil
+	return nil, rows.Err()
 }
 
 // tracklistByRelease returns the ordered tracklist of an MB release (by gid).

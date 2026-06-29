@@ -83,39 +83,22 @@ func (m *MirrorDB) findAlbumDiscogs(q AlbumQuery) ([]AlbumCandidate, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Drain the cursor before running per-row sub-queries. SQLite ATTACH is
-	// per-connection; if we hold the outer rows open while calling back into
-	// the pool, a new (unattached) connection may be issued for the inner
-	// query. Closing first ensures the attached connection is idle and reused.
-	type rawRow struct {
-		id    int64
-		title string
-		year  sql.NullInt64
-	}
-	var raw []rawRow
-	for rows.Next() {
-		var r rawRow
-		if err := rows.Scan(&r.id, &r.title, &r.year); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		raw = append(raw, r)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
+	defer rows.Close()
 
 	var out []AlbumCandidate
-	for _, r := range raw {
+	for rows.Next() {
+		var id int64
+		var title string
+		var year sql.NullInt64
+		if err := rows.Scan(&id, &title, &year); err != nil {
+			return nil, err
+		}
 		c := AlbumCandidate{
-			DiscogsMasterID: core.DiscogsMasterID(r.id),
-			Title:           r.title,
+			DiscogsMasterID: core.DiscogsMasterID(id),
+			Title:           title,
 			Credits:         core.Credits{{Role: core.RoleArtist, Name: name}},
 			Sources:         []core.Source{core.SourceDiscogs},
-			Match:           Match{TitleDistance: floatPtr(titleDistance(q.Title, r.title))},
+			Match:           Match{TitleDistance: floatPtr(titleDistance(q.Title, title))},
 		}
 		if name == "" {
 			c.Credits = nil
@@ -123,13 +106,13 @@ func (m *MirrorDB) findAlbumDiscogs(q AlbumQuery) ([]AlbumCandidate, error) {
 		if requested {
 			c.Match.ArtistConfirmed = boolPtr(true)
 		}
-		if r.year.Valid {
-			c.Year = int(r.year.Int64)
+		if year.Valid {
+			c.Year = int(year.Int64)
 			if q.Year != 0 {
-				c.Match.YearMatch = boolPtr(int(r.year.Int64) == q.Year)
+				c.Match.YearMatch = boolPtr(int(year.Int64) == q.Year)
 			}
 		}
-		styles, err := m.masterStyles(r.id)
+		styles, err := m.masterStyles(id)
 		if err != nil {
 			return nil, err
 		}
@@ -137,13 +120,13 @@ func (m *MirrorDB) findAlbumDiscogs(q AlbumQuery) ([]AlbumCandidate, error) {
 		var n int
 		if err := m.DB.QueryRow(
 			`SELECT COUNT(*) FROM dc.track t JOIN dc.release r ON r.id = t.release_id
-			  WHERE r.master_id = ? AND r.is_main_release = 1`, r.id).Scan(&n); err != nil {
+			  WHERE r.master_id = ? AND r.is_main_release = 1`, id).Scan(&n); err != nil {
 			return nil, err
 		}
 		c.TrackCount = n
 		out = append(out, c)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // masterStyles returns the Discogs master's genres then styles, in seq order.
@@ -221,64 +204,46 @@ func (m *MirrorDB) findAlbumMB(q AlbumQuery) ([]AlbumCandidate, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Drain the cursor fully before issuing per-row sub-queries.  With
-	// SetMaxOpenConns(1) the single connection cannot serve both an open rows
-	// cursor and a concurrent sub-query — drain first to avoid deadlock.
-	type rawRGRow struct {
-		gid  string
-		name string
-		dmid sql.NullInt64
-		year sql.NullInt64
-	}
-	var raw []rawRGRow
-	for rows.Next() {
-		var r rawRGRow
-		if err := rows.Scan(&r.gid, &r.name, &r.dmid, &r.year); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		raw = append(raw, r)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
+	defer rows.Close()
 
 	var out []AlbumCandidate
-	for _, r := range raw {
+	for rows.Next() {
+		var gid, name string
+		var dmid, year sql.NullInt64
+		if err := rows.Scan(&gid, &name, &dmid, &year); err != nil {
+			return nil, err
+		}
 		c := AlbumCandidate{
-			MBID:    core.MBID(r.gid),
-			Title:   r.name,
+			MBID:    core.MBID(gid),
+			Title:   name,
 			Sources: []core.Source{core.SourceMusicBrainz},
-			Match:   Match{TitleDistance: floatPtr(titleDistance(q.Title, r.name))},
+			Match:   Match{TitleDistance: floatPtr(titleDistance(q.Title, name))},
 		}
-		if r.dmid.Valid && r.dmid.Int64 != 0 {
-			c.DiscogsMasterID = core.DiscogsMasterID(r.dmid.Int64)
+		if dmid.Valid && dmid.Int64 != 0 {
+			c.DiscogsMasterID = core.DiscogsMasterID(dmid.Int64)
 		}
-		if r.year.Valid && r.year.Int64 != 0 {
-			c.Year = int(r.year.Int64)
+		if year.Valid && year.Int64 != 0 {
+			c.Year = int(year.Int64)
 			if q.Year != 0 {
-				c.Match.YearMatch = boolPtr(int(r.year.Int64) == q.Year)
+				c.Match.YearMatch = boolPtr(int(year.Int64) == q.Year)
 			}
 		}
 		if confirmed {
 			c.Match.ArtistConfirmed = boolPtr(true)
 		}
-		if names, err := m.albumArtistCredits(r.gid); err != nil {
+		if names, err := m.albumArtistCredits(gid); err != nil {
 			return nil, err
 		} else {
 			c.Credits = names
 		}
-		if traits, err := m.albumTraits(r.gid); err != nil {
+		if traits, err := m.albumTraits(gid); err != nil {
 			return nil, err
 		} else {
 			c.Traits = traits
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // albumArtistCredits returns the release-group's credited artists as RoleArtist
