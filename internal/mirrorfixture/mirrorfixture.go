@@ -85,6 +85,20 @@ var mbStmts = []string{
 	`INSERT INTO release_group_fts (rowid, title) VALUES (61, 'Best of Traffic')`,
 	`INSERT INTO release_group_meta (id, first_release_date_year) VALUES (61, 1975)`,
 	`INSERT INTO release_group_secondary_type_join (release_group, secondary_type) VALUES (61, 1)`,
+	// --- work + relationship links (classical) ---
+	`CREATE TABLE work (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, type INTEGER, comment TEXT)`,
+	`CREATE VIRTUAL TABLE work_fts USING fts5(title, content='')`,
+	`CREATE TABLE link (id INTEGER PRIMARY KEY, link_type INTEGER)`,
+	`CREATE TABLE l_recording_work (id INTEGER PRIMARY KEY, link INTEGER, entity0 INTEGER, entity1 INTEGER, link_order INTEGER)`,
+	`CREATE TABLE l_artist_work (id INTEGER PRIMARY KEY, link INTEGER, entity0 INTEGER, entity1 INTEGER, link_order INTEGER)`,
+	`INSERT INTO link (id, link_type) VALUES (1, 278), (2, 168)`, // 278=performance, 168=composer
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (300, 'work-mpm', 'Missa Papae Marcelli', 1, '')`,
+	`INSERT INTO work_fts (rowid, title) VALUES (300, 'Missa Papae Marcelli')`,
+	`INSERT INTO artist (id, gid, name, comment) VALUES (3, 'a-palestrina', 'Palestrina', '')`,
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES (30, 'r-kyrie', 'Kyrie', 360000, '', 1)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (1, 1, 30, 300, 0)`, // recording 30 performs work 300
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (1, 2, 3, 300, 0)`,      // artist 3 (Palestrina) composes work 300
+	`INSERT INTO isrc (recording, isrc) VALUES (30, 'GBCLASSICAL01')`,
 }
 
 var dcStmts = []string{
