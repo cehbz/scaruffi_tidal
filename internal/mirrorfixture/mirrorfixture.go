@@ -132,7 +132,7 @@ var dcStmts = []string{
 	`CREATE TABLE master_genre (master_id INTEGER, seq INTEGER, genre TEXT)`,
 	`CREATE TABLE master_style (master_id INTEGER, seq INTEGER, style TEXT)`,
 	`CREATE TABLE release (id INTEGER PRIMARY KEY, master_id INTEGER, is_main_release INTEGER, title TEXT, country TEXT, released_raw TEXT)`,
-	`CREATE TABLE track (release_id INTEGER, seq INTEGER, position TEXT, title TEXT, duration TEXT)`,
+	`CREATE TABLE track (id INTEGER PRIMARY KEY, release_id INTEGER, parent_track_id INTEGER, seq INTEGER, position TEXT, title TEXT, duration TEXT)`,
 	`INSERT INTO master (id, main_release_id, title, year) VALUES (69017, 583800, 'John Barleycorn Must Die', 1970)`,
 	`INSERT INTO master_fts (rowid, title, artist_names) VALUES (69017, 'John Barleycorn Must Die', 'Traffic')`,
 	`INSERT INTO master_artist (master_id, seq, artist_id) VALUES (69017, 1, 900)`,
@@ -141,9 +141,16 @@ var dcStmts = []string{
 	`INSERT INTO master_style (master_id, seq, style) VALUES (69017, 1, 'Folk Rock'), (69017, 2, 'Blues Rock')`,
 	`INSERT INTO release (id, master_id, is_main_release, title, country, released_raw) VALUES (583800, 69017, 1, 'John Barleycorn Must Die', 'UK', '1970-07-01')`,
 	`INSERT INTO release (id, master_id, is_main_release, title, country, released_raw) VALUES (382820, 69017, 0, 'John Barleycorn Must Die', 'UK', '1987')`,
-	`INSERT INTO track (release_id, seq, position, title, duration) VALUES (583800, 1, 'A1', 'Glad', '6:32'), (583800, 2, 'A2', 'Freedom Rider', '6:20')`,
+	`INSERT INTO track (id, release_id, parent_track_id, seq, position, title, duration) VALUES (100, 583800, NULL, 1, 'A1', 'Glad', '6:32'), (101, 583800, NULL, 2, 'A2', 'Freedom Rider', '6:20')`,
+	// Reissue 382820: one top-level track plus a sub-track of it. The sub-track
+	// (parent_track_id = 110) must be excluded by the parent_track_id IS NULL filter,
+	// so the reissue's edition track_count is 1, not 2.
+	`INSERT INTO track (id, release_id, parent_track_id, seq, position, title, duration) VALUES (110, 382820, NULL, 1, 'A', 'John Barleycorn Suite', '12:00')`,
+	`INSERT INTO track (id, release_id, parent_track_id, seq, position, title, duration) VALUES (111, 382820, 110, 2, 'A.i', 'Part One', '6:00')`,
 	`CREATE TABLE release_format (id INTEGER PRIMARY KEY, release_id INTEGER, seq INTEGER, name TEXT)`,
 	`CREATE TABLE release_label (release_id INTEGER, seq INTEGER, label_id INTEGER, name TEXT, catno TEXT)`,
 	`INSERT INTO release_format (id, release_id, seq, name) VALUES (1, 583800, 1, 'Vinyl'), (2, 382820, 1, 'Vinyl')`,
-	`INSERT INTO release_label (release_id, seq, label_id, name, catno) VALUES (583800, 1, 1, 'Island Records', 'ILPS 9116'), (382820, 1, 1, 'Island Records', 'IRSP 10')`,
+	// 382820's label name contains a comma to exercise comma-safe label extraction
+	// (a GROUP_CONCAT split on "," would fragment it).
+	`INSERT INTO release_label (release_id, seq, label_id, name, catno) VALUES (583800, 1, 1, 'Island Records', 'ILPS 9116'), (382820, 1, 2, 'PolyGram Records, Inc.', 'IRSP 10')`,
 }

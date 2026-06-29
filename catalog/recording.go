@@ -133,7 +133,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) ([]RecordingCandidate,
 		   LEFT JOIN isrc i ON i.recording = r.id
 		  WHERE lrw.entity1 = ? AND l.link_type = 278
 		  GROUP BY r.id
-		  ORDER BY lrw.link_order
+		  ORDER BY lrw.link_order, r.gid
 		  LIMIT ?`, workID, q.Limit)
 	if err != nil {
 		return nil, err

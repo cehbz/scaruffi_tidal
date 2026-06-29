@@ -120,7 +120,7 @@ func (m *MirrorDB) findAlbumDiscogs(q AlbumQuery) ([]AlbumCandidate, error) {
 		var n int
 		if err := m.DB.QueryRow(
 			`SELECT COUNT(*) FROM dc.track t JOIN dc.release r ON r.id = t.release_id
-			  WHERE r.master_id = ? AND r.is_main_release = 1`, id).Scan(&n); err != nil {
+			  WHERE r.master_id = ? AND r.is_main_release = 1 AND t.parent_track_id IS NULL`, id).Scan(&n); err != nil {
 			return nil, err
 		}
 		c.TrackCount = n
@@ -131,25 +131,12 @@ func (m *MirrorDB) findAlbumDiscogs(q AlbumQuery) ([]AlbumCandidate, error) {
 
 // masterStyles returns the Discogs master's genres then styles, in seq order.
 func (m *MirrorDB) masterStyles(masterID int64) ([]string, error) {
-	rows, err := m.DB.Query(
+	return m.scanStrings(
 		`SELECT value FROM (
 		    SELECT genre AS value, seq, 0 AS kind FROM dc.master_genre WHERE master_id = ?
 		    UNION ALL
 		    SELECT style AS value, seq, 1 AS kind FROM dc.master_style WHERE master_id = ?
 		 ) AS s ORDER BY kind, seq`, masterID, masterID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
 }
 
 func (m *MirrorDB) findAlbumMB(q AlbumQuery) ([]AlbumCandidate, error) {
