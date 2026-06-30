@@ -29,6 +29,7 @@ func newFindRecordingCmd() *cobra.Command {
 				ISRC:       core.ISRC(isrc),
 				Work:       work,
 				Limit:      limit,
+				Credits:    credits,
 			}
 			if q.ArtistMBID == "" {
 				if names := credits.Names(core.RoleArtist); len(names) > 0 {
@@ -40,14 +41,19 @@ func newFindRecordingCmd() *cobra.Command {
 				return err
 			}
 			defer m.Close()
-			cands, err := m.FindRecording(q)
+			res, err := m.FindRecording(q)
 			if err != nil {
 				return err
 			}
+			cands := res.Candidates
 			if cands == nil {
 				cands = []catalog.RecordingCandidate{}
 			}
-			return emitJSON(cmd, map[string]any{"candidates": cands})
+			out := map[string]any{"candidates": cands}
+			if len(res.Warnings) > 0 {
+				out["warnings"] = res.Warnings
+			}
+			return emitJSON(cmd, out)
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "recording title")

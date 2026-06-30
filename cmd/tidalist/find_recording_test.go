@@ -52,7 +52,7 @@ func TestFindRecordingCommandByWork(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("not candidates JSON: %v\n%s", err, out)
 	}
-	if len(got.Candidates) != 1 || got.Candidates[0].MBID != "r-kyrie" {
+	if len(got.Candidates) != 3 || got.Candidates[0].MBID != "r-kyrie" {
 		t.Fatalf("candidates = %+v", got.Candidates)
 	}
 }
@@ -63,5 +63,26 @@ func TestFindRecordingCommandRejectsBadCredit(t *testing.T) {
 		"--musicbrainz-db", mb, "--discogs-db", dc)
 	if err == nil {
 		t.Error("an unknown credit role must fail the command")
+	}
+}
+
+func TestFindRecordingCommandWorkCreditUmbrella(t *testing.T) {
+	mb, dc := writeFixtureDBs(t)
+	// conductor umbrella reaches the standalone chorus-master recording (rec 32).
+	out, err := runCmd(t, "find-recording", "--work", "Missa Papae Marcelli",
+		"--credit", "conductor:Barnaby Smith", "--musicbrainz-db", mb, "--discogs-db", dc)
+	if err != nil {
+		t.Fatalf("execute: %v (out=%s)", err, out)
+	}
+	var got struct {
+		Candidates []struct {
+			MBID string `json:"mbid"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not candidates JSON: %v\n%s", err, out)
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].MBID != "r-mpm-acap" {
+		t.Fatalf("conductor umbrella should match the chorus-master recording; got %+v", got.Candidates)
 	}
 }

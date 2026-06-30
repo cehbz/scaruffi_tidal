@@ -11,6 +11,7 @@ var validRoles = map[core.Role]bool{
 	core.RoleComposer: true, core.RoleConductor: true, core.RoleSoloist: true,
 	core.RoleOrchestra: true, core.RoleChorus: true, core.RoleArtist: true,
 	core.RoleProducer: true, core.RoleEngineer: true, core.RoleMastering: true,
+	core.RoleChorusMaster: true,
 }
 
 // parseCredit parses "role:name[:k=v,k=v]". Role is split at the first colon; the
