@@ -104,12 +104,12 @@ func TestIntegrationFindRecordingByTitleArtist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) == 0 {
+	if len(got.Candidates) == 0 {
 		t.Fatal("expected at least one recording of 'Glad' by Traffic")
 	}
 	// The canonical JBMD Glad recording must appear.
 	var found bool
-	for _, c := range got {
+	for _, c := range got.Candidates {
 		if c.MBID == core.MBID(gladRecordingGID) {
 			found = true
 			if c.ISRC == "" {
@@ -122,7 +122,7 @@ func TestIntegrationFindRecordingByTitleArtist(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("Glad recording gid %s not found in %d candidates", gladRecordingGID, len(got))
+		t.Errorf("Glad recording gid %s not found in %d candidates", gladRecordingGID, len(got.Candidates))
 	}
 }
 
@@ -134,11 +134,11 @@ func TestIntegrationFindRecordingByWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) == 0 {
+	if len(got.Candidates) == 0 {
 		t.Fatal("expected at least one recording linked to work 'Dear Mr. Fantasy'")
 	}
 	// Every result must have a gid and a title.
-	for i, c := range got {
+	for i, c := range got.Candidates {
 		if c.MBID == "" {
 			t.Errorf("result[%d] missing MBID", i)
 		}
@@ -289,6 +289,112 @@ func TestIntegrationAlbumEditionsMB(t *testing.T) {
 		}
 		if e.Source != core.SourceMusicBrainz {
 			t.Errorf("edition[%d] source = %q, want musicbrainz", i, e.Source)
+		}
+	}
+}
+
+// TestIntegrationFindRecordingByWorkPerformerCredits checks that a classical
+// work query returns candidates with performer Credits (conductor + orchestra)
+// and that a conductor filter narrows the result set.
+//
+// Anchors (verified live 2026-06-30):
+//   - Beethoven Symphony no. 5 in C minor, op. 67: I. Allegro con brio
+//     work gid: b6f9ecc3-24d1-38ed-b8a0-091f7cd0c6b2 (758 recordings total)
+//   - Herbert von Karajan: 24 recordings of this movement; 4 in the top-50
+//     most-released recordings.
+const (
+	beethoven5ImvtWorkName = "Symphony no. 5 in C minor, op. 67: I. Allegro con brio"
+	beethoven5ImvtWorkGID  = "b6f9ecc3-24d1-38ed-b8a0-091f7cd0c6b2"
+	karajan                = "Herbert von Karajan"
+)
+
+func TestIntegrationFindRecordingByWorkPerformerCredits(t *testing.T) {
+	m := openRealMirror(t)
+
+	// (a) Unfiltered: top-10 candidates must carry Credits with conductor or
+	// orchestra on at least one result.  The work has 758 recordings so the
+	// truncation warning must appear.
+	unfiltered, err := m.FindRecording(RecordingQuery{
+		Work:  beethoven5ImvtWorkName,
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unfiltered.Candidates) == 0 {
+		t.Fatal("expected at least one recording for Beethoven 5th mvt I")
+	}
+	var foundPerformerCredit bool
+	for _, c := range unfiltered.Candidates {
+		for _, cr := range c.Credits {
+			if cr.Role == core.RoleConductor || cr.Role == core.RoleOrchestra {
+				foundPerformerCredit = true
+				break
+			}
+		}
+	}
+	if !foundPerformerCredit {
+		t.Error("expected at least one candidate with a conductor or orchestra credit")
+	}
+	if len(unfiltered.Warnings) == 0 {
+		t.Error("expected a truncation warning for an unfiltered work with 758 recordings")
+	}
+
+	// (b) Conductor filter: limit=50 → Karajan appears in 4 of the top-50.
+	// All returned candidates must have the Karajan conductor credit.
+	filtered, err := m.FindRecording(RecordingQuery{
+		Work:    beethoven5ImvtWorkName,
+		Credits: core.Credits{{Role: core.RoleConductor, Name: karajan}},
+		Limit:   50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Candidates) == 0 {
+		t.Fatalf("expected at least one Beethoven 5th I recording by %s", karajan)
+	}
+	for i, c := range filtered.Candidates {
+		if !c.Credits.MatchesRole(core.RoleConductor, karajan) {
+			t.Errorf("filtered[%d] %q: missing conductor credit %q", i, c.Title, karajan)
+		}
+	}
+}
+
+// TestIntegrationFindRecordingByWorkConductorUmbrella checks that the
+// --credit conductor: umbrella matches a recording whose director is credited
+// as chorus_master only (link_type 152), not conductor (link_type 151).
+//
+// Anchor (verified live 2026-06-30):
+//   - Magnus liber organi de graduali… gid: 376c5c49-a7c0-4642-bfe9-7edbc813dbe0
+//     11 recordings, all directed by James O'Donnell (chorus_master only, no conductor).
+const (
+	magnusLiberWorkName   = "Magnus liber organi de graduali et antiphonario pro servitio divino"
+	magnusLiberWorkGID    = "376c5c49-a7c0-4642-bfe9-7edbc813dbe0"
+	magnusLiberChorusMstr = "James O’Donnell" // stored with RIGHT SINGLE QUOTATION MARK (U+2019)
+)
+
+func TestIntegrationFindRecordingByWorkConductorUmbrella(t *testing.T) {
+	m := openRealMirror(t)
+
+	got, err := m.FindRecording(RecordingQuery{
+		Work:    magnusLiberWorkName,
+		Credits: core.Credits{{Role: core.RoleConductor, Name: magnusLiberChorusMstr}},
+		Limit:   20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Candidates) == 0 {
+		t.Fatalf("conductor umbrella failed: expected recordings matched by %q (chorus_master)", magnusLiberChorusMstr)
+	}
+	// Every matched recording must carry a chorus_master credit for O'Donnell,
+	// not a conductor credit (umbrella matched it, but the credit is chorus_master).
+	for i, c := range got.Candidates {
+		if c.Credits.Has(core.RoleConductor, magnusLiberChorusMstr) {
+			t.Errorf("result[%d] %q: %s credited as conductor (expected chorus_master)", i, c.Title, magnusLiberChorusMstr)
+		}
+		if !c.Credits.Has(core.RoleChorusMaster, magnusLiberChorusMstr) {
+			t.Errorf("result[%d] %q: %s chorus_master credit missing", i, c.Title, magnusLiberChorusMstr)
 		}
 	}
 }
