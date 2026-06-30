@@ -48,6 +48,23 @@ func (cs Credits) Has(role Role, name string) bool {
 	return false
 }
 
+// MatchesRole reports whether some credit in the given role has a name matching
+// name by bidirectional case-insensitive substring (so "Tallis Scholars" matches
+// "The Tallis Scholars"). Used to filter by a requested credit.
+func (cs Credits) MatchesRole(role Role, name string) bool {
+	n := strings.ToLower(name)
+	for _, c := range cs {
+		if c.Role != role {
+			continue
+		}
+		cn := strings.ToLower(c.Name)
+		if strings.Contains(cn, n) || strings.Contains(n, cn) {
+			return true
+		}
+	}
+	return false
+}
+
 // performingRoles are the credit roles that count as performing a recording (as
 // opposed to composing or engineering it). PerformedBy matches against these.
 var performingRoles = map[Role]bool{

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/cehbz/tidalist/core"
@@ -15,19 +16,27 @@ type RecordingQuery struct {
 	ISRC       core.ISRC
 	Work       string
 	Limit      int
+	Credits    core.Credits
 }
 
 // RecordingCandidate is a ranked recording result.
 type RecordingCandidate struct {
-	MBID      core.MBID `json:"mbid,omitempty"`
-	ISRC      core.ISRC `json:"isrc,omitempty"`
-	Title     string    `json:"title"`
-	DurationS int       `json:"duration_s,omitempty"`
-	Match     Match     `json:"match"`
+	MBID      core.MBID    `json:"mbid,omitempty"`
+	ISRC      core.ISRC    `json:"isrc,omitempty"`
+	Title     string       `json:"title"`
+	DurationS int          `json:"duration_s,omitempty"`
+	Match     Match        `json:"match"`
+	Credits   core.Credits `json:"credits,omitempty"`
+}
+
+// RecordingResult is the return value of FindRecording.
+type RecordingResult struct {
+	Candidates []RecordingCandidate `json:"candidates"`
+	Warnings   []string             `json:"warnings,omitempty"`
 }
 
 // FindRecording returns ranked recording candidates (port of mb_mirror recordings_for).
-func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error) {
+func (m *MirrorDB) FindRecording(q RecordingQuery) (RecordingResult, error) {
 	if q.Work != "" {
 		return m.findRecordingsByWork(q)
 	}
@@ -39,12 +48,12 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error)
 		if err == nil {
 			confirmed = true
 		} else if err != sql.ErrNoRows {
-			return nil, err
+			return RecordingResult{}, err
 		}
 	} else if q.ArtistName != "" {
 		id, ok, err := m.resolveArtistID(q.ArtistName)
 		if err != nil {
-			return nil, err
+			return RecordingResult{}, err
 		}
 		artistID, confirmed = id, ok
 	}
@@ -52,14 +61,14 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error)
 	// If an artist was requested but did not resolve, return no candidates.
 	artistRequested := q.ArtistMBID != "" || q.ArtistName != ""
 	if artistRequested && !confirmed {
-		return nil, nil
+		return RecordingResult{}, nil
 	}
 
 	var rows *sql.Rows
 	var err error
 	if confirmed {
 		rows, err = m.DB.Query(
-			`SELECT r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
+			`SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
 			   FROM recording_fts f
 			   JOIN recording r ON r.id = f.rowid
 			   JOIN artist_credit_name acn ON acn.artist_credit = r.artist_credit
@@ -70,7 +79,7 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error)
 			  LIMIT ?`, ftsTitle(q.Title), artistID, q.Limit)
 	} else {
 		rows, err = m.DB.Query(
-			`SELECT r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
+			`SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
 			   FROM recording_fts f
 			   JOIN recording r ON r.id = f.rowid
 			   LEFT JOIN isrc i ON i.recording = r.id
@@ -80,17 +89,18 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error)
 			  LIMIT ?`, ftsTitle(q.Title), q.Limit)
 	}
 	if err != nil {
-		return nil, err
+		return RecordingResult{}, err
 	}
 	defer rows.Close()
 
 	var out []RecordingCandidate
 	for rows.Next() {
+		var id int64
 		var gid, name string
 		var length sql.NullInt64
 		var isrcs sql.NullString
-		if err := rows.Scan(&gid, &name, &length, &isrcs); err != nil {
-			return nil, err
+		if err := rows.Scan(&id, &gid, &name, &length, &isrcs); err != nil {
+			return RecordingResult{}, err
 		}
 		isrc := firstISRC(isrcs.String)
 		match := Match{TitleDistance: floatPtr(titleDistance(q.Title, name))}
@@ -104,9 +114,17 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) ([]RecordingCandidate, error)
 		if length.Valid {
 			c.DurationS = int(length.Int64 / 1000)
 		}
+		credits, err := m.recordingCredits(id)
+		if err != nil {
+			return RecordingResult{}, err
+		}
+		c.Credits = credits
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return RecordingResult{}, err
+	}
+	return RecordingResult{Candidates: out}, nil
 }
 
 // firstISRC returns the first entry of a "a, b, c" GROUP_CONCAT, or "".
@@ -117,41 +135,104 @@ func firstISRC(concat string) string {
 	return strings.SplitN(concat, ", ", 2)[0]
 }
 
-func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) ([]RecordingCandidate, error) {
+func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, error) {
 	workID, ok, err := m.resolveWorkID(q.Work)
 	if err != nil {
-		return nil, err
+		return RecordingResult{}, err
 	}
 	if !ok {
-		return nil, nil // unresolved work → no candidates
+		return RecordingResult{}, nil // unresolved work → no candidates
 	}
+
 	rows, err := m.DB.Query(
-		`SELECT r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
+		`SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
 		   FROM l_recording_work lrw
 		   JOIN link l ON l.id = lrw.link
 		   JOIN recording r ON r.id = lrw.entity0
 		   LEFT JOIN isrc i ON i.recording = r.id
 		  WHERE lrw.entity1 = ? AND l.link_type = 278
 		  GROUP BY r.id
-		  ORDER BY lrw.link_order, r.gid
+		  ORDER BY COUNT(i.isrc) DESC, r.id ASC
 		  LIMIT ?`, workID, q.Limit)
 	if err != nil {
-		return nil, err
+		return RecordingResult{}, err
 	}
 	defer rows.Close()
-	var out []RecordingCandidate
+
+	var cands []RecordingCandidate
 	for rows.Next() {
+		var id int64
 		var gid, name string
 		var length sql.NullInt64
 		var isrcs sql.NullString
-		if err := rows.Scan(&gid, &name, &length, &isrcs); err != nil {
-			return nil, err
+		if err := rows.Scan(&id, &gid, &name, &length, &isrcs); err != nil {
+			return RecordingResult{}, err
 		}
-		c := RecordingCandidate{MBID: core.MBID(gid), ISRC: core.ISRC(firstISRC(isrcs.String)), Title: name, Match: Match{}}
+		c := RecordingCandidate{
+			MBID:  core.MBID(gid),
+			ISRC:  core.ISRC(firstISRC(isrcs.String)),
+			Title: name,
+			Match: Match{},
+		}
 		if length.Valid {
 			c.DurationS = int(length.Int64 / 1000)
 		}
-		out = append(out, c)
+		credits, err := m.recordingCredits(id)
+		if err != nil {
+			return RecordingResult{}, err
+		}
+		c.Credits = credits
+		cands = append(cands, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return RecordingResult{}, err
+	}
+
+	// Apply credit filter: ALL requested credits must match (AND semantics).
+	if len(q.Credits) > 0 {
+		umbrella := func(req core.Credit, have core.Credits) bool {
+			if have.MatchesRole(req.Role, req.Name) {
+				return true
+			}
+			// directing umbrella: a requested conductor also matches a chorus_master credit
+			if req.Role == core.RoleConductor && have.MatchesRole(core.RoleChorusMaster, req.Name) {
+				return true
+			}
+			return false
+		}
+		var filtered []RecordingCandidate
+		for _, cand := range cands {
+			ok := true
+			for _, req := range q.Credits {
+				if !umbrella(req, cand.Credits) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				filtered = append(filtered, cand)
+			}
+		}
+		cands = filtered
+	}
+
+	// Warning: unfiltered work query that was truncated by limit.
+	var warnings []string
+	if len(q.Credits) == 0 {
+		var total int
+		err := m.DB.QueryRow(
+			`SELECT COUNT(*) FROM l_recording_work lrw
+			   JOIN link l ON l.id = lrw.link
+			  WHERE lrw.entity1 = ? AND l.link_type = 278`, workID).Scan(&total)
+		if err != nil {
+			return RecordingResult{}, err
+		}
+		if total > q.Limit {
+			warnings = append(warnings, fmt.Sprintf(
+				"work %q has %d recordings; showing %d (most-released first) — narrow with --credit (orchestra:/conductor:/soloist:/chorus:)",
+				q.Work, total, len(cands)))
+		}
+	}
+
+	return RecordingResult{Candidates: cands, Warnings: warnings}, nil
 }

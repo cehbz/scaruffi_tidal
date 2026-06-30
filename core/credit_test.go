@@ -47,6 +47,19 @@ func TestCreditJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreditsMatchesRole(t *testing.T) {
+	cs := Credits{{Role: RoleOrchestra, Name: "The Tallis Scholars"}, {Role: RoleConductor, Name: "Peter Phillips"}}
+	if !cs.MatchesRole(RoleOrchestra, "Tallis Scholars") {
+		t.Error("bidirectional substring within the right role should match")
+	}
+	if cs.MatchesRole(RoleConductor, "Tallis Scholars") {
+		t.Error("must not match across roles")
+	}
+	if cs.MatchesRole(RoleSoloist, "Phillips") {
+		t.Error("absent role must not match")
+	}
+}
+
 func TestCreditsPerforms(t *testing.T) {
 	cs := Credits{
 		{Role: RoleOrchestra, Name: "The Tallis Scholars"},
