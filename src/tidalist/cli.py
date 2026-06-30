@@ -14,9 +14,8 @@ from pathlib import Path
 from .config import AppConfig
 from .core.golden import Curator
 from .core.realize import realize, publish, Realization
-from .core.spec import to_golden, from_golden, to_intent
+from .core.spec import to_golden, from_golden
 from .nl.intent import parse_intent
-from .scaruffi.parse import parse_scaruffi
 
 
 # --- presentation ------------------------------------------------------------
@@ -71,11 +70,6 @@ def curate_golden(intent: dict, metadata) -> dict:
     return to_golden(Curator(metadata).curate(brief, candidates, provenances))
 
 
-def scaruffi_intent(html: str, *, name: str = "Scaruffi Classical") -> dict:
-    candidates, provenances, brief = parse_scaruffi(html, name=name)
-    return to_intent(brief, candidates, provenances)
-
-
 def realize_golden(golden_data: dict, realizer) -> Realization:
     return realize(from_golden(golden_data), realizer)
 
@@ -108,10 +102,6 @@ def main(argv=None, *, config_loader=AppConfig.load,
          metadata_factory=build_metadata, realizer_factory=build_realizer, out=None) -> int:
     out = out or sys.stdout
     args = _parser().parse_args(argv)
-
-    if args.command == "scaruffi":
-        _write_json(scaruffi_intent(_read_text(args.html), name=args.name), args.output, out)
-        return 0
 
     if args.command == "curate":
         golden = curate_golden(_read_json(args.intent), metadata_factory(config_loader(args.config)))
@@ -155,11 +145,6 @@ def _parser() -> argparse.ArgumentParser:
                                 description="Curate a golden playlist, then realize it onto a platform.")
     p.add_argument("--config", default=None, help="path to config.yaml (default: XDG)")
     sub = p.add_subparsers(dest="command", required=True)
-
-    sc = sub.add_parser("scaruffi", help="parse Scaruffi's classical HTML into an intent JSON")
-    sc.add_argument("html", help="Scaruffi classical HTML path (or - for stdin)")
-    sc.add_argument("-o", "--output", default=None, help="write intent JSON here (default: stdout)")
-    sc.add_argument("--name", default="Scaruffi Classical", help="playlist name")
 
     c = sub.add_parser("curate", help="build a golden playlist from an intent JSON")
     c.add_argument("intent", help="intent JSON path (or - for stdin)")

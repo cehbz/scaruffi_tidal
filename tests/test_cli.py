@@ -197,27 +197,3 @@ def test_main_unknown_command_exits():
     with pytest.raises(SystemExit):
         cli.main(["frobnicate"])
 
-
-# --- scaruffi front-end ------------------------------------------------------
-
-_SCARUFFI_HTML = ("<table><tr><td>\n<br>Bach: Brandenburg Concertos\n"
-                  "<br>Recommended recording: Il Giardino Armonico (1997)\n</td></tr></table>")
-
-
-def test_scaruffi_intent_produces_intent_json_with_candidates_and_notes():
-    intent = cli.scaruffi_intent(_SCARUFFI_HTML, name="Scaruffi Picks")
-    assert intent["name"] == "Scaruffi Picks"
-    cand = intent["candidates"][0]
-    assert cand["artist"] == "Il Giardino Armonico"
-    assert cand["title"] == "Bach: Brandenburg Concertos"
-    assert "Il Giardino Armonico" in cand["note"]
-
-
-def test_main_scaruffi_writes_intent_file(tmp_path):
-    html_path = tmp_path / "page.html"
-    html_path.write_text(_SCARUFFI_HTML)
-    out_path = tmp_path / "intent.json"
-    rc = cli.main(["scaruffi", str(html_path), "-o", str(out_path)])
-    assert rc == 0
-    intent = json.loads(out_path.read_text())
-    assert intent["candidates"][0]["artist"] == "Il Giardino Armonico"
