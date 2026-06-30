@@ -170,6 +170,53 @@ func TestFindRecordingByWorkCreditsAndUmbrella(t *testing.T) {
 	}
 }
 
+func TestFindRecordingByTitleFiltersByCredits(t *testing.T) {
+	m := newTestMirror(t)
+
+	// Recording r-kyrie ("Kyrie") carries conductor Peter Phillips and a
+	// standalone chorus_master "Some Chorusmaster". The title path must apply
+	// --credit uniformly, including the conductor→chorus_master umbrella.
+
+	// Matching conductor → kept.
+	res, err := m.FindRecording(RecordingQuery{
+		Title:   "Kyrie",
+		Credits: core.Credits{{Role: core.RoleConductor, Name: "Peter Phillips"}},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].MBID != "r-kyrie" {
+		t.Fatalf("title-path conductor filter should keep only r-kyrie; got %+v", res.Candidates)
+	}
+
+	// Non-matching conductor → filtered out.
+	res, err = m.FindRecording(RecordingQuery{
+		Title:   "Kyrie",
+		Credits: core.Credits{{Role: core.RoleConductor, Name: "Nonexistent Conductor"}},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 0 {
+		t.Fatalf("title-path non-matching credit must filter out the candidate; got %+v", res.Candidates)
+	}
+
+	// Conductor umbrella reaches a standalone chorus_master on the title path too.
+	res, err = m.FindRecording(RecordingQuery{
+		Title:   "Kyrie",
+		Credits: core.Credits{{Role: core.RoleConductor, Name: "Some Chorusmaster"}},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].MBID != "r-kyrie" {
+		t.Fatalf("title-path conductor umbrella must match a chorus_master credit; got %+v", res.Candidates)
+	}
+}
+
 func TestFindRecordingByWorkWarnsWhenTruncated(t *testing.T) {
 	m := newTestMirror(t)
 	res, err := m.FindRecording(RecordingQuery{Work: "Missa Papae Marcelli", Limit: 2})

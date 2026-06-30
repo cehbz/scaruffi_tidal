@@ -8,6 +8,10 @@ import (
 	"github.com/cehbz/tidalist/core"
 )
 
+// linkTypePerformance is the l_recording_work link_type for "recording is a
+// performance of work" (the only arc that links a recording to a work here).
+const linkTypePerformance = 278
+
 // RecordingQuery describes a recording to find.
 type RecordingQuery struct {
 	Title      string
@@ -124,7 +128,41 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) (RecordingResult, error) {
 	if err := rows.Err(); err != nil {
 		return RecordingResult{}, err
 	}
+	// Apply any non-artist --credit filter uniformly (the SQL above narrows by
+	// artist only); no-op when q.Credits is empty.
+	out = filterByCredits(out, q.Credits)
 	return RecordingResult{Candidates: out}, nil
+}
+
+// filterByCredits keeps only candidates whose attached credits satisfy ALL
+// requested credits (AND semantics). A requested conductor also matches a
+// chorus_master credit — the directing umbrella; asymmetric, so a literal
+// chorus_master request stays exact. Empty want returns the input unchanged.
+func filterByCredits(cands []RecordingCandidate, want core.Credits) []RecordingCandidate {
+	if len(want) == 0 {
+		return cands
+	}
+	matches := func(req core.Credit, have core.Credits) bool {
+		if have.MatchesRole(req.Role, req.Name) {
+			return true
+		}
+		// directing umbrella: a requested conductor also matches a chorus_master credit
+		return req.Role == core.RoleConductor && have.MatchesRole(core.RoleChorusMaster, req.Name)
+	}
+	var filtered []RecordingCandidate
+	for _, cand := range cands {
+		ok := true
+		for _, req := range want {
+			if !matches(req, cand.Credits) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			filtered = append(filtered, cand)
+		}
+	}
+	return filtered
 }
 
 // firstISRC returns the first entry of a "a, b, c" GROUP_CONCAT, or "".
@@ -150,10 +188,10 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		   JOIN link l ON l.id = lrw.link
 		   JOIN recording r ON r.id = lrw.entity0
 		   LEFT JOIN isrc i ON i.recording = r.id
-		  WHERE lrw.entity1 = ? AND l.link_type = 278
+		  WHERE lrw.entity1 = ? AND l.link_type = ?
 		  GROUP BY r.id
 		  ORDER BY COUNT(i.isrc) DESC, r.id ASC
-		  LIMIT ?`, workID, q.Limit)
+		  LIMIT ?`, workID, linkTypePerformance, q.Limit)
 	if err != nil {
 		return RecordingResult{}, err
 	}
@@ -188,42 +226,18 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		return RecordingResult{}, err
 	}
 
-	// Apply credit filter: ALL requested credits must match (AND semantics).
-	if len(q.Credits) > 0 {
-		umbrella := func(req core.Credit, have core.Credits) bool {
-			if have.MatchesRole(req.Role, req.Name) {
-				return true
-			}
-			// directing umbrella: a requested conductor also matches a chorus_master credit
-			if req.Role == core.RoleConductor && have.MatchesRole(core.RoleChorusMaster, req.Name) {
-				return true
-			}
-			return false
-		}
-		var filtered []RecordingCandidate
-		for _, cand := range cands {
-			ok := true
-			for _, req := range q.Credits {
-				if !umbrella(req, cand.Credits) {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				filtered = append(filtered, cand)
-			}
-		}
-		cands = filtered
-	}
+	// Apply credit filter: ALL requested credits must match (AND semantics),
+	// with the conductor→chorus_master umbrella.
+	cands = filterByCredits(cands, q.Credits)
 
 	// Warning: unfiltered work query that was truncated by limit.
 	var warnings []string
 	if len(q.Credits) == 0 {
 		var total int
 		err := m.DB.QueryRow(
-			`SELECT COUNT(*) FROM l_recording_work lrw
+			`SELECT COUNT(DISTINCT lrw.entity0) FROM l_recording_work lrw
 			   JOIN link l ON l.id = lrw.link
-			  WHERE lrw.entity1 = ? AND l.link_type = 278`, workID).Scan(&total)
+			  WHERE lrw.entity1 = ? AND l.link_type = ?`, workID, linkTypePerformance).Scan(&total)
 		if err != nil {
 			return RecordingResult{}, err
 		}

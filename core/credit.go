@@ -1,6 +1,11 @@
 package core
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
+)
 
 type Role string
 
@@ -48,16 +53,47 @@ func (cs Credits) Has(role Role, name string) bool {
 	return false
 }
 
+// normalizeName folds a name for matching: lowercase, NFD-decompose and strip
+// combining marks (so "Brüggen" matches "Bruggen"), and map curly apostrophes to
+// ASCII. Mirrors the mirrors' FTS remove_diacritics so the Go filter and FTS agree.
+func normalizeName(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range norm.NFD.String(s) {
+		if unicode.Is(unicode.Mn, r) { // Mn = combining mark; drop it
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := strings.ToLower(b.String())
+	return apostropheFolder.Replace(out)
+}
+
+// apostropheFolder maps the apostrophe variants MB uses (curly U+2019/U+2018 and
+// the modifier letter apostrophe U+02BC) to ASCII, so ASCII-apostrophe queries match.
+var apostropheFolder = strings.NewReplacer(
+	"’", "'",
+	"‘", "'",
+	"ʼ", "'",
+)
+
 // MatchesRole reports whether some credit in the given role has a name matching
 // name by bidirectional case-insensitive substring (so "Tallis Scholars" matches
-// "The Tallis Scholars"). Used to filter by a requested credit.
+// "The Tallis Scholars"). Names are normalized (diacritics/apostrophes folded) so
+// the Go filter agrees with the FTS layer. Used to filter by a requested credit.
 func (cs Credits) MatchesRole(role Role, name string) bool {
-	n := strings.ToLower(name)
+	n := normalizeName(name)
+	if n == "" {
+		return false
+	}
 	for _, c := range cs {
 		if c.Role != role {
 			continue
 		}
-		cn := strings.ToLower(c.Name)
+		cn := normalizeName(c.Name)
+		if cn == "" {
+			continue
+		}
 		if strings.Contains(cn, n) || strings.Contains(n, cn) {
 			return true
 		}
@@ -74,14 +110,21 @@ var performingRoles = map[Role]bool{
 
 // Performs reports whether name appears among the performing-role credits, using
 // bidirectional case-insensitive substring matching (so "Tallis Scholars" matches
-// "The Tallis Scholars"). ToLower approximates Python casefold for ASCII names.
+// "The Tallis Scholars"). Names are normalized (diacritics/apostrophes folded) so
+// the Go filter agrees with the FTS layer.
 func (cs Credits) Performs(name string) bool {
-	n := strings.ToLower(name)
+	n := normalizeName(name)
+	if n == "" {
+		return false
+	}
 	for _, c := range cs {
 		if !performingRoles[c.Role] {
 			continue
 		}
-		cn := strings.ToLower(c.Name)
+		cn := normalizeName(c.Name)
+		if cn == "" {
+			continue
+		}
 		if strings.Contains(cn, n) || strings.Contains(n, cn) {
 			return true
 		}

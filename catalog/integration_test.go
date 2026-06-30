@@ -371,6 +371,9 @@ const (
 	magnusLiberWorkName   = "Magnus liber organi de graduali et antiphonario pro servitio divino"
 	magnusLiberWorkGID    = "376c5c49-a7c0-4642-bfe9-7edbc813dbe0"
 	magnusLiberChorusMstr = "James O’Donnell" // stored with RIGHT SINGLE QUOTATION MARK (U+2019)
+	// magnusLiberQueryASCII is the same name typed with an ASCII apostrophe; the
+	// credit filter must fold it to the stored U+2019 form (proves normalizeName).
+	magnusLiberQueryASCII = "James O'Donnell"
 )
 
 func TestIntegrationFindRecordingByWorkConductorUmbrella(t *testing.T) {
@@ -378,7 +381,7 @@ func TestIntegrationFindRecordingByWorkConductorUmbrella(t *testing.T) {
 
 	got, err := m.FindRecording(RecordingQuery{
 		Work:    magnusLiberWorkName,
-		Credits: core.Credits{{Role: core.RoleConductor, Name: magnusLiberChorusMstr}},
+		Credits: core.Credits{{Role: core.RoleConductor, Name: magnusLiberQueryASCII}},
 		Limit:   20,
 	})
 	if err != nil {

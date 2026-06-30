@@ -22,6 +22,13 @@ const (
 
 const artistTypeChoir = 6 // artist.type for a Choir
 
+// link_attribute_type magic numbers (verified): root buckets and the choir leaf.
+const (
+	rootInstrument  = 14 // link_attribute_type.root for instruments
+	rootVocal       = 3  // link_attribute_type.root for vocals
+	attrChoirVocals = 13 // link_attribute_type.id for "choir vocals" (root 3)
+)
+
 func (m *MirrorDB) recordingCredits(recordingID int64) (core.Credits, error) {
 	var cs core.Credits
 	// 1) credited artist(s) -> RoleArtist
@@ -51,8 +58,8 @@ func (m *MirrorDB) recordingCredits(recordingID int64) (core.Credits, error) {
 		`SELECT lt.id,
 		        COALESCE(NULLIF(lar.entity0_credit,''), a.name) AS name,
 		        a.type,
-		        GROUP_CONCAT(CASE WHEN lat.root IN (14,3) THEN lat.name END) AS instrument,
-		        MAX(CASE WHEN la.attribute_type = 13 THEN 1 ELSE 0 END) AS is_choir
+		        GROUP_CONCAT(CASE WHEN lat.root IN (?,?) THEN lat.name END) AS instrument,
+		        MAX(CASE WHEN la.attribute_type = ? THEN 1 ELSE 0 END) AS is_choir
 		   FROM l_artist_recording lar
 		   JOIN link l ON l.id = lar.link
 		   JOIN link_type lt ON lt.id = l.link_type
@@ -62,6 +69,7 @@ func (m *MirrorDB) recordingCredits(recordingID int64) (core.Credits, error) {
 		  WHERE lar.entity1 = ? AND l.link_type IN (?,?,?,?,?,?)
 		  GROUP BY lar.id
 		  ORDER BY lar.id`,
+		rootInstrument, rootVocal, attrChoirVocals,
 		recordingID, ltPerformer, ltInstrument, ltVocal, ltOrchestra, ltConductor, ltChorusMaster)
 	if err != nil {
 		return nil, err

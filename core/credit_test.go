@@ -60,6 +60,26 @@ func TestCreditsMatchesRole(t *testing.T) {
 	}
 }
 
+func TestCreditsMatchesRoleNormalizes(t *testing.T) {
+	// Diacritic fold: MB stores "Brüggen"; an ASCII query "Bruggen" must match.
+	cs := Credits{{Role: RoleConductor, Name: "Frans Brüggen"}}
+	if !cs.MatchesRole(RoleConductor, "Frans Bruggen") {
+		t.Error("ASCII query should match a diacritic-bearing credit name")
+	}
+	if !cs.MatchesRole(RoleConductor, "Brüggen") {
+		t.Error("diacritic query should still match")
+	}
+	// Apostrophe fold: MB stores U+2019; an ASCII-apostrophe query must match.
+	ap := Credits{{Role: RoleChorusMaster, Name: "James O’Donnell"}}
+	if !ap.MatchesRole(RoleChorusMaster, "James O'Donnell") {
+		t.Error("ASCII-apostrophe query should match a U+2019 credit name")
+	}
+	// Empty query name must never match.
+	if cs.MatchesRole(RoleConductor, "") {
+		t.Error("empty query name must return false")
+	}
+}
+
 func TestCreditsPerforms(t *testing.T) {
 	cs := Credits{
 		{Role: RoleOrchestra, Name: "The Tallis Scholars"},
@@ -73,5 +93,26 @@ func TestCreditsPerforms(t *testing.T) {
 	}
 	if cs.Performs("The Beatles") {
 		t.Error("an absent name must not match")
+	}
+}
+
+func TestCreditsPerformsChorusMaster(t *testing.T) {
+	cs := Credits{{Role: RoleChorusMaster, Name: "Barnaby Smith"}}
+	if !cs.Performs("Barnaby Smith") {
+		t.Error("chorus_master is a performing role and should match")
+	}
+}
+
+func TestCreditsPerformsNormalizes(t *testing.T) {
+	cs := Credits{{Role: RoleConductor, Name: "Frans Brüggen"}}
+	if !cs.Performs("Frans Bruggen") {
+		t.Error("ASCII query should match a diacritic-bearing performing credit")
+	}
+	ap := Credits{{Role: RoleChorusMaster, Name: "James O’Donnell"}}
+	if !ap.Performs("James O'Donnell") {
+		t.Error("ASCII-apostrophe query should match a U+2019 performing credit")
+	}
+	if cs.Performs("") {
+		t.Error("empty query name must return false")
 	}
 }
