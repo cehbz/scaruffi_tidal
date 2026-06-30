@@ -24,6 +24,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newFindAlbumCmd())
 	root.AddCommand(newTracklistCmd())
 	root.AddCommand(newAlbumEditionsCmd())
+	root.AddCommand(newLintIntentCmd())
 	return root
 }
 
