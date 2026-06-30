@@ -116,3 +116,36 @@ func TestCreditsPerformsNormalizes(t *testing.T) {
 		t.Error("empty query name must return false")
 	}
 }
+
+func TestRolesVocabulary(t *testing.T) {
+	roles := Roles()
+	if len(roles) != 10 {
+		t.Fatalf("Roles() len = %d, want 10", len(roles))
+	}
+	// Precedence order is load-bearing (canonical credit ordering).
+	want := []Role{
+		RoleComposer, RoleConductor, RoleSoloist, RoleOrchestra, RoleChorus,
+		RoleChorusMaster, RoleArtist, RoleProducer, RoleEngineer, RoleMastering,
+	}
+	for i, r := range want {
+		if roles[i] != r {
+			t.Errorf("Roles()[%d] = %q, want %q", i, roles[i], r)
+		}
+	}
+	for _, r := range want {
+		if !ValidRole(r) {
+			t.Errorf("ValidRole(%q) = false, want true", r)
+		}
+	}
+	if ValidRole(Role("pianist")) {
+		t.Error("ValidRole(\"pianist\") = true, want false")
+	}
+}
+
+func TestRolesIsACopy(t *testing.T) {
+	a := Roles()
+	a[0] = "mutated"
+	if Roles()[0] != RoleComposer {
+		t.Error("Roles() returns a shared slice; callers can corrupt the vocabulary")
+	}
+}

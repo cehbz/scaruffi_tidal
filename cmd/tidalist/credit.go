@@ -7,13 +7,6 @@ import (
 	"github.com/cehbz/tidalist/core"
 )
 
-var validRoles = map[core.Role]bool{
-	core.RoleComposer: true, core.RoleConductor: true, core.RoleSoloist: true,
-	core.RoleOrchestra: true, core.RoleChorus: true, core.RoleArtist: true,
-	core.RoleProducer: true, core.RoleEngineer: true, core.RoleMastering: true,
-	core.RoleChorusMaster: true,
-}
-
 // parseCredit parses "role:name[:k=v,k=v]". Role is split at the first colon; the
 // remainder is the name unless a trailing colon-segment looks like attrs (k=v…).
 func parseCredit(spec string) (core.Credit, error) {
@@ -22,7 +15,7 @@ func parseCredit(spec string) (core.Credit, error) {
 		return core.Credit{}, fmt.Errorf("credit must be role:name, got %q", spec)
 	}
 	r := core.Role(role)
-	if !validRoles[r] {
+	if !core.ValidRole(r) {
 		return core.Credit{}, fmt.Errorf("unknown credit role %q", role)
 	}
 	name := rest

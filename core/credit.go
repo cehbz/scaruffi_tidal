@@ -22,6 +22,29 @@ const (
 	RoleMastering    Role = "mastering"
 )
 
+// roles is the canonical role vocabulary in precedence order. The order is
+// load-bearing: it is the order credits are emitted in canonical intent markdown
+// (creative leads, then performers, then production).
+var roles = []Role{
+	RoleComposer, RoleConductor, RoleSoloist, RoleOrchestra, RoleChorus,
+	RoleChorusMaster, RoleArtist, RoleProducer, RoleEngineer, RoleMastering,
+}
+
+var roleSet = func() map[Role]bool {
+	m := make(map[Role]bool, len(roles))
+	for _, r := range roles {
+		m[r] = true
+	}
+	return m
+}()
+
+// Roles returns the canonical role vocabulary in precedence order. The returned
+// slice is a copy; callers may not mutate the package vocabulary.
+func Roles() []Role { return append([]Role(nil), roles...) }
+
+// ValidRole reports whether r is one of the known credit roles.
+func ValidRole(r Role) bool { return roleSet[r] }
+
 type Credit struct {
 	Role  Role              `json:"role"`
 	Name  string            `json:"name"`
