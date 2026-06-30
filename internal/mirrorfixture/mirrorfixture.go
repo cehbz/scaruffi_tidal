@@ -41,7 +41,7 @@ func exec(path string, stmts []string) error {
 }
 
 var mbStmts = []string{
-	`CREATE TABLE artist (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, comment TEXT)`,
+	`CREATE TABLE artist (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, comment TEXT, type INTEGER)`,
 	`CREATE VIRTUAL TABLE artist_fts USING fts5(name, content='')`,
 	`CREATE TABLE artist_credit_name (artist_credit INTEGER, artist INTEGER)`,
 	`CREATE TABLE recording (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, length INTEGER, comment TEXT, artist_credit INTEGER)`,
@@ -118,6 +118,34 @@ var mbStmts = []string{
 	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES (811, 't-fr-us', 21, 701, 2, '2', 'Freedom Rider', 329000)`,
 	`INSERT INTO release_country (release, country, date_year, date_month, date_day) VALUES (501, 2, 1970, NULL, NULL)`,
 	`INSERT INTO release_label (id, release, label, catalog_number) VALUES (2, 501, 2, 'UAS 5504')`,
+	// --- recording↔artist performer relationships (slice 2d) ---
+	`CREATE TABLE link_type (id INTEGER PRIMARY KEY, name TEXT)`,
+	`CREATE TABLE l_artist_recording (id INTEGER PRIMARY KEY, link INTEGER, entity0 INTEGER, entity1 INTEGER, link_order INTEGER, entity0_credit TEXT)`,
+	`CREATE TABLE link_attribute (link INTEGER, attribute_type INTEGER)`,
+	`CREATE TABLE link_attribute_type (id INTEGER PRIMARY KEY, root INTEGER, name TEXT)`,
+	`INSERT INTO link_type (id, name) VALUES (156,'performer'),(148,'instrument'),(149,'vocal'),(150,'performing orchestra'),(151,'conductor'),(152,'chorus master')`,
+	`INSERT INTO link_attribute_type (id, root, name) VALUES (14,14,'instrument'),(3,3,'vocal'),(180,14,'piano'),(10,3,'soprano vocals'),(13,3,'choir vocals')`,
+	// performer artists (type: 1=Person,5=Orchestra,6=Choir)
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (40,'a-tallis','The Tallis Scholars','',5)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (41,'a-phillips','Peter Phillips','',1)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (42,'a-kirkby','Emma Kirkby','',1)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (43,'a-choir','Oxford Choir','',6)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (44,'a-chorusmaster','Some Chorusmaster','',1)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (45,'a-bsmith','Barnaby Smith','',1)`,
+	// link rows (link.id -> link_type); 2c already inserted link (1,278),(2,168)
+	`INSERT INTO link (id, link_type) VALUES (10,150),(11,151),(12,148),(13,149),(14,152),(15,150),(16,152)`,
+	// recording 30 (r-kyrie, work 300): orchestra(Tallis), conductor(Phillips), soloist(Kirkby,piano), chorus(Oxford Choir via choir vocals), AND chorus-master(surfaced as chorus_master)
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES (1,10,40,30,0,''),(2,11,41,30,0,''),(3,12,42,30,0,''),(4,13,43,30,0,''),(5,14,44,30,0,'')`,
+	`INSERT INTO link_attribute (link, attribute_type) VALUES (12,180),(13,13)`, // soloist Kirkby->piano(180); choir vocal->choir vocals(13)
+	// recording 31: a different orchestra (artist 1 Traffic), for the orchestra --credit filter
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES (31,'r-mpm-other','Missa Papae Marcelli',360000,'',1)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (2,1,31,300,0)`,
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES (6,15,1,31,0,'')`,
+	`INSERT INTO isrc (recording, isrc) VALUES (31,'GBCLASSICAL02')`,
+	// recording 32: a STANDALONE chorus-master (Barnaby Smith via 152, NO conductor) — the de-facto director; reachable via the conductor umbrella
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES (32,'r-mpm-acap','Missa Papae Marcelli',360000,'',1)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (3,1,32,300,0)`,
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES (7,16,45,32,0,'')`,
 }
 
 var dcStmts = []string{

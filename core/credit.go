@@ -5,15 +5,16 @@ import "strings"
 type Role string
 
 const (
-	RoleComposer  Role = "composer"
-	RoleConductor Role = "conductor"
-	RoleSoloist   Role = "soloist"
-	RoleOrchestra Role = "orchestra"
-	RoleChorus    Role = "chorus"
-	RoleArtist    Role = "artist"
-	RoleProducer  Role = "producer"
-	RoleEngineer  Role = "engineer"
-	RoleMastering Role = "mastering"
+	RoleComposer     Role = "composer"
+	RoleConductor    Role = "conductor"
+	RoleSoloist      Role = "soloist"
+	RoleOrchestra    Role = "orchestra"
+	RoleChorus       Role = "chorus"
+	RoleChorusMaster Role = "chorus_master"
+	RoleArtist       Role = "artist"
+	RoleProducer     Role = "producer"
+	RoleEngineer     Role = "engineer"
+	RoleMastering    Role = "mastering"
 )
 
 type Credit struct {
@@ -51,7 +52,7 @@ func (cs Credits) Has(role Role, name string) bool {
 // opposed to composing or engineering it). PerformedBy matches against these.
 var performingRoles = map[Role]bool{
 	RoleArtist: true, RoleSoloist: true, RoleOrchestra: true,
-	RoleChorus: true, RoleConductor: true,
+	RoleChorus: true, RoleConductor: true, RoleChorusMaster: true,
 }
 
 // Performs reports whether name appears among the performing-role credits, using

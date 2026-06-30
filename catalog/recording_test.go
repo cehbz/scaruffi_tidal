@@ -98,8 +98,8 @@ func TestFindRecordingByWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 recording of the work, got %d", len(got))
+	if len(got) != 3 {
+		t.Fatalf("expected 3 recordings of the work, got %d", len(got))
 	}
 	if got[0].MBID != "r-kyrie" {
 		t.Errorf("MBID = %q, want r-kyrie", got[0].MBID)
