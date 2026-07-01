@@ -2,6 +2,22 @@
 
 Active work only. Completed work is in git history; architecture/design in `docs/superpowers/`.
 
+## Redesign (2026-06): intent → curate → render, Go reimplementation
+
+Specs (gitignored): `docs/superpowers/specs/2026-06-28-intent-curate-render-design.md` (overall) + `2026-06-28-cli-grammar-intent-schema-design.md` (CLI grammar + intent markdown). Work is on the unmerged `slice1-credit-set-model` branch (slices 1/1b/2a–2d landed there; git log is the record).
+
+- [ ] Slice 4: curate best-effort + report (LLM resolves identity, deterministic type-aware criteria gate admission, marginal-confidence flagged).
+- [ ] Slice 5: render (rename realize→render) + diff/sync — the Python Tidal tool behind the JSON seam.
+- [ ] Slice 6: descriptor discovery (4A LLM-knowledge materialize; 4B catalog attribute-queries — high value).
+- [ ] Performance resolution (curate-adjacent; distinct from, not blocking, interpret). Spec: `docs/superpowers/specs/2026-07-01-performance-resolution-design.md` (brainstorm converged, mirror-validated, pre-plan). Resolve the *performance* (composer ∧ work-group ∧ conductor ∧ orchestra ∧ soloists ∧ chorus; year+label as selectors) over a federated MB+Discogs concordance — composer-aware work-group resolution (`l_work_work` 281) + conjunctive credit selection + first-co-release clustering + MB↔Discogs reconciliation via the already-materialised `artist.discogs_artist_id` bridge. Fixes the `find-recording --work` gaps (incl. the release-breadth `COUNT(isrc)` ordering that isn't original-vs-rerecording aware); retires top-1 title-only `resolveWorkID`.
+
+### Go catalog — follow-ups
+- [ ] Perf: first MB `recording_fts` MATCH ~2.6s cold (mmap of the 55GB file); measure warm vs cold, consider warming for interactive use. The Discogs `track_count` planner pathology is CROSS-JOIN-pinned; other large-mirror queries may need the same — the `//go:build integration` suite is the guard.
+- [ ] `catalog/mirror.go` connector: bare `conn.(driver.ExecerContext)` assertion panics on a hypothetical future modernc conn → comma-ok + close + error.
+- [ ] `catalog` ATTACH builds the URI by single-quote interpolation; `url.PathEscape` doesn't escape `'` → a DB path containing `'` breaks ATTACH. Parameterize/escape (low risk: trusted config path).
+
+The items below predate the redesign — they describe the current Python pipeline (replaced slice-by-slice); several are real requirements the Go version must carry.
+
 ## Realize — remaining fidelity work
 
 - [ ] Live no-silent-substitution integration test (deferred: no stable fixture).
@@ -15,7 +31,7 @@ Active work only. Completed work is in git history; architecture/design in `docs
 - [ ] Playlist ordering: an ordering directive in the intent (e.g. "by decreasing best-ness") the Curator preserves and publish honors.
 - [ ] Dedup: drop a track whose recording is already on an album in the same playlist.
 - [ ] `performed_by(member)` over-rejects band recordings credited to the group; needs band-membership / MB relationship awareness, not a performer-credit string match.
-- [ ] Recording selection sometimes picks a later re-recording (e.g. "I'm a Man" -> 1988); prefer the original.
+- [ ] Recording selection sometimes picks a later re-recording (e.g. "I'm a Man" -> 1988); prefer the original. (The performance-resolution design addresses this via first-release-date clustering.)
 - [ ] Per-run caching: memoize the Tidal discography per artist (MB artist resolution is now a fast local mirror query, so less pressing).
 - [ ] Local-file realizer (VLC / local files) and a persistent Tidal lookup cache. (The local MB/Discogs SQLite mirrors are done.)
 
