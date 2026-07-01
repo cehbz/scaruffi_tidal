@@ -100,6 +100,10 @@ var apostropheFolder = strings.NewReplacer(
 	"ʼ", "'",
 )
 
+// NormalizeName exposes the matching fold (NFD + strip combining marks + fold curly
+// apostrophes + lowercase) for raw name-key comparisons outside this package.
+func NormalizeName(s string) string { return normalizeName(s) }
+
 // MatchesRole reports whether some credit in the given role has a name matching
 // name by bidirectional case-insensitive substring (so "Tallis Scholars" matches
 // "The Tallis Scholars"). Names are normalized (diacritics/apostrophes folded) so

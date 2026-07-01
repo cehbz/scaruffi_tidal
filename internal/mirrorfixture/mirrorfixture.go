@@ -264,4 +264,33 @@ var dcStmts = []string{
 	// 382820's label name contains a comma to exercise comma-safe label extraction
 	// (a GROUP_CONCAT split on "," would fragment it).
 	`INSERT INTO release_label (release_id, seq, label_id, name, catno) VALUES (583800, 1, 1, 'Island Records', 'ILPS 9116'), (382820, 1, 2, 'PolyGram Records, Inc.', 'IRSP 10')`,
+	// --- performance-side bridge tables (Task 3): release_artist, release_identifier, label, label_relationship ---
+	`CREATE TABLE release_artist (id INTEGER PRIMARY KEY, release_id INTEGER, seq INTEGER, artist_id INTEGER, role TEXT, kind TEXT)`,
+	`CREATE TABLE release_identifier (release_id INTEGER, seq INTEGER, type TEXT, value TEXT, description TEXT)`,
+	`CREATE TABLE label (id INTEGER PRIMARY KEY, name TEXT)`,
+	`CREATE TABLE label_relationship (parent_label_id INTEGER, sublabel_id INTEGER)`,
+	// Discogs artists (bridge targets): 299702 Bernstein, 950 NYPhil.
+	`INSERT INTO artist (id, name) VALUES (299702,'Leonard Bernstein'),(950,'New York Philharmonic'),(951,'Wiener Philharmoniker')`,
+	// Labels + a family (Columbia is the parent of CBS).
+	`INSERT INTO label (id, name) VALUES (10,'Columbia'),(11,'CBS'),(12,'Deutsche Grammophon')`,
+	`INSERT INTO label_relationship (parent_label_id, sublabel_id) VALUES (10,11)`,
+	// MASTER A (1963) on CBS (sublabel of Columbia); MASTER B (1985) on Deutsche Grammophon.
+	`INSERT INTO master (id, main_release_id, title, year) VALUES (70000,60000,'Beethoven: Symphony No. 5',1963)`,
+	`INSERT INTO master (id, main_release_id, title, year) VALUES (70001,60001,'Beethoven: Symphony No. 5',1985)`,
+	`INSERT INTO master_fts (rowid, title, artist_names) VALUES
+		(70000,'Beethoven: Symphony No. 5','Leonard Bernstein'),
+		(70001,'Beethoven: Symphony No. 5','Leonard Bernstein')`,
+	`INSERT INTO release (id, master_id, is_main_release, title, country, released_raw) VALUES
+		(60000,70000,1,'Beethoven: Symphony No. 5','US','1963'),
+		(60001,70001,1,'Beethoven: Symphony No. 5','DE','1985')`,
+	`INSERT INTO release_artist (id, release_id, seq, artist_id, role, kind) VALUES
+		(1,60000,1,299702,'Conductor','artist'),
+		(2,60000,2,950,'Orchestra','artist'),
+		(3,60001,1,299702,'Conducted By','artist'),
+		(4,60001,2,951,'Orchestra','artist')`,
+	`INSERT INTO release_label (release_id, seq, label_id, name, catno) VALUES
+		(60000,1,11,'CBS','MS 6468'),
+		(60001,1,12,'Deutsche Grammophon','DG 415 861-2')`,
+	`INSERT INTO release_identifier (release_id, seq, type, value, description) VALUES
+		(60001,1,'Barcode','028941586124','')`,
 }

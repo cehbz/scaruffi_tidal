@@ -76,3 +76,32 @@ func perfsYears(ps []Performance) []int {
 	}
 	return out
 }
+
+func TestDiscogsPerformancesViaBridge(t *testing.T) {
+	m := newTestMirror(t)
+	q := PerformanceQuery{
+		Work: "Beethoven: Symphony No. 5",
+		Credits: core.Credits{
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+		Limit: 10,
+	}
+	dps, err := m.discogsPerformances(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only MASTER A (70000) carries BOTH bridged forces (Bernstein 299702 + NYPhil 950).
+	var found *dcPerf
+	for i := range dps {
+		if dps[i].MasterID == 70000 {
+			found = &dps[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("MASTER A (Bernstein+NYPhil) must resolve via the bridge; got %+v", dps)
+	}
+	if found.Year != 1963 || found.Label != "CBS" || found.Catno != "MS 6468" {
+		t.Errorf("master A attrs = year %d label %q catno %q", found.Year, found.Label, found.Catno)
+	}
+}

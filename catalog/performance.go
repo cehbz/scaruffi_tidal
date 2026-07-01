@@ -213,6 +213,159 @@ func matchedForces(have, want core.Credits) core.Credits {
 	return out
 }
 
+// dcPerf is a Discogs-side performance candidate: a master whose track/title matches
+// the work and whose release_artist roles satisfy the bridged credit AND.
+type dcPerf struct {
+	MasterID    int64
+	Year        int
+	LabelID     int64
+	Label       string
+	Catno       string
+	ArtistIDs   []int64
+	Credits     core.Credits
+	viaFallback bool
+}
+
+// discogsPerformances returns Discogs masters matching the work title whose main
+// release satisfies EVERY requested performer credit via the crossed-artist-id
+// bridge (role-normalised). year/label/catno ride along as within-block attributes.
+func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
+	want := performerCredits(q.Credits)
+
+	// Resolve each requested credit to a Discogs artist id via the bridge.
+	var wantIDs []creditID
+	fallbackUsed := false
+	for _, w := range want {
+		id, viaFallback, ok, err := m.bridgedDiscogsID(w.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			// A requested force with no Discogs identity → no Discogs performance can
+			// satisfy the AND; return nothing (MB may still resolve).
+			return nil, nil
+		}
+		fallbackUsed = fallbackUsed || viaFallback
+		wantIDs = append(wantIDs, creditID{role: w.Role, id: id})
+	}
+
+	rows, err := m.DB.Query(
+		`SELECT m.id, m.main_release_id, m.year
+		   FROM dc.master_fts f
+		   JOIN dc.master m ON m.id = f.rowid
+		  WHERE master_fts MATCH ?
+		  ORDER BY f.rank
+		  LIMIT ?`, ftsTitle(q.Work), max(q.Limit, 25))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []dcPerf
+	for rows.Next() {
+		var masterID, mainRelease int64
+		var year sql.NullInt64
+		if err := rows.Scan(&masterID, &mainRelease, &year); err != nil {
+			return nil, err
+		}
+		ra, err := m.releaseArtists(mainRelease)
+		if err != nil {
+			return nil, err
+		}
+		if !releaseSatisfies(ra, wantIDs) {
+			continue
+		}
+		dp := dcPerf{MasterID: masterID, viaFallback: fallbackUsed}
+		if year.Valid {
+			dp.Year = int(year.Int64)
+		}
+		for _, a := range ra {
+			dp.ArtistIDs = append(dp.ArtistIDs, a.id)
+			if r := discogsRole(a.role); r != "" {
+				dp.Credits = append(dp.Credits, core.Credit{Role: r, Name: a.name})
+			}
+		}
+		dp.LabelID, dp.Label, dp.Catno, err = m.mainReleaseLabel(mainRelease)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dp)
+	}
+	return out, rows.Err()
+}
+
+type dcReleaseArtist struct {
+	id   int64
+	name string
+	role string
+}
+
+func (m *MirrorDB) releaseArtists(releaseID int64) ([]dcReleaseArtist, error) {
+	rows, err := m.DB.Query(
+		`SELECT ra.artist_id, COALESCE(a.name,''), COALESCE(ra.role,'')
+		   FROM dc.release_artist ra
+		   LEFT JOIN dc.artist a ON a.id = ra.artist_id
+		  WHERE ra.release_id = ?
+		  ORDER BY ra.seq`, releaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []dcReleaseArtist
+	for rows.Next() {
+		var ra dcReleaseArtist
+		if err := rows.Scan(&ra.id, &ra.name, &ra.role); err != nil {
+			return nil, err
+		}
+		out = append(out, ra)
+	}
+	return out, rows.Err()
+}
+
+// creditID is a requested (role, Discogs-artist-id) constraint.
+type creditID struct {
+	role core.Role
+	id   int64
+}
+
+// releaseSatisfies reports whether every requested (role,id) is present among the
+// release's artists with a role-compatible credit (conductor umbrella included).
+func releaseSatisfies(ra []dcReleaseArtist, want []creditID) bool {
+	for _, w := range want {
+		ok := false
+		for _, a := range ra {
+			if a.id != w.id {
+				continue
+			}
+			r := discogsRole(a.role)
+			if r == w.role || (w.role == core.RoleConductor && r == core.RoleChorusMaster) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// mainReleaseLabel returns the first label (id, name, catno) of the release.
+func (m *MirrorDB) mainReleaseLabel(releaseID int64) (int64, string, string, error) {
+	var id sql.NullInt64
+	var name, catno sql.NullString
+	err := m.DB.QueryRow(
+		`SELECT label_id, name, catno FROM dc.release_label
+		  WHERE release_id = ? ORDER BY seq LIMIT 1`, releaseID).Scan(&id, &name, &catno)
+	if err == sql.ErrNoRows {
+		return 0, "", "", nil
+	}
+	if err != nil {
+		return 0, "", "", err
+	}
+	return id.Int64, name.String, catno.String, nil
+}
+
 // earliestReleaseGroup returns the recording's earliest release-group id and its
 // first-release year (min year, then min rg id). ok=false when the recording is on
 // no release-group.

@@ -149,3 +149,12 @@ func TestRolesIsACopy(t *testing.T) {
 		t.Error("Roles() returns a shared slice; callers can corrupt the vocabulary")
 	}
 }
+
+func TestNormalizeNameExported(t *testing.T) {
+	if NormalizeName("Sir Georg Solti") != normalizeName("Sir Georg Solti") {
+		t.Error("exported NormalizeName must equal the internal fold")
+	}
+	if NormalizeName("Brüggen") != "bruggen" {
+		t.Errorf("diacritics must fold: got %q", NormalizeName("Brüggen"))
+	}
+}
