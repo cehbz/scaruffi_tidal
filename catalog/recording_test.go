@@ -217,6 +217,18 @@ func TestFindRecordingByTitleFiltersByCredits(t *testing.T) {
 	}
 }
 
+func TestFindRecordingByWorkUsesWorkGroupNotTop1(t *testing.T) {
+	m := newTestMirror(t)
+	// The existing Palestrina case still works (single work, no movements).
+	res, err := m.FindRecording(RecordingQuery{Work: "Missa Papae Marcelli", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) == 0 {
+		t.Fatal("Missa Papae Marcelli must still list its recordings via the work-group path")
+	}
+}
+
 func TestFindRecordingByWorkWarnsWhenTruncated(t *testing.T) {
 	m := newTestMirror(t)
 	res, err := m.FindRecording(RecordingQuery{Work: "Missa Papae Marcelli", Limit: 2})

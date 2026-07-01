@@ -41,7 +41,7 @@ func exec(path string, stmts []string) error {
 }
 
 var mbStmts = []string{
-	`CREATE TABLE artist (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, comment TEXT, type INTEGER)`,
+	`CREATE TABLE artist (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, comment TEXT, type INTEGER, discogs_artist_id INTEGER)`,
 	`CREATE VIRTUAL TABLE artist_fts USING fts5(name, content='')`,
 	`CREATE TABLE artist_credit_name (artist_credit INTEGER, artist INTEGER)`,
 	`CREATE TABLE recording (id INTEGER PRIMARY KEY, gid TEXT, name TEXT, length INTEGER, comment TEXT, artist_credit INTEGER)`,
@@ -91,6 +91,7 @@ var mbStmts = []string{
 	`CREATE TABLE link (id INTEGER PRIMARY KEY, link_type INTEGER)`,
 	`CREATE TABLE l_recording_work (id INTEGER PRIMARY KEY, link INTEGER, entity0 INTEGER, entity1 INTEGER, link_order INTEGER)`,
 	`CREATE TABLE l_artist_work (id INTEGER PRIMARY KEY, link INTEGER, entity0 INTEGER, entity1 INTEGER, link_order INTEGER)`,
+	`CREATE TABLE l_work_work (id INTEGER PRIMARY KEY, link INTEGER, entity0 INTEGER, entity1 INTEGER, link_order INTEGER)`,
 	`INSERT INTO link (id, link_type) VALUES (1, 278), (2, 168)`, // 278=performance, 168=composer
 	`INSERT INTO work (id, gid, name, type, comment) VALUES (300, 'work-mpm', 'Missa Papae Marcelli', 1, '')`,
 	`INSERT INTO work_fts (rowid, title) VALUES (300, 'Missa Papae Marcelli')`,
@@ -147,6 +148,39 @@ var mbStmts = []string{
 	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES (32,'r-mpm-acap','Missa Papae Marcelli',360000,'',1)`,
 	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (3,1,32,300,0)`,
 	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES (7,16,45,32,0,'')`,
+	// --- work-group (slice 2e): 281 parts, 350 arrangement (excluded) ---
+	`INSERT INTO link (id, link_type) VALUES (20,281),(21,350)`,
+	// Parent work + four movements (work-group via l_work_work 281 parts).
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (50,'a-beethoven','Ludwig van Beethoven','',1)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (51,'a-brahms','Johannes Brahms','',1)`,
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (310,'w-sym5','Symphony no. 5 in C minor, op. 67',1,'')`,
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (311,'w-sym5-i','Symphony no. 5 in C minor, op. 67: I. Allegro con brio',1,'')`,
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (312,'w-sym5-ii','Symphony no. 5 in C minor, op. 67: II. Andante con moto',1,'')`,
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (313,'w-sym5-iii','Symphony no. 5 in C minor, op. 67: III. Scherzo',1,'')`,
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (314,'w-sym5-iv','Symphony no. 5 in C minor, op. 67: IV. Allegro',1,'')`,
+	// A same-title work by a DIFFERENT composer (Brahms) — composer must disambiguate.
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (320,'w-brahms5','Symphony no. 5 in C minor',1,'')`,
+	// A title-twin work with ZERO recordings (the arc-less stub FTS often ranks first).
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (321,'w-stub','Symphony no. 5 in C minor, op. 67',1,'')`,
+	// An ARRANGEMENT of the parent (link_type 350) — must be excluded from the group.
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (322,'w-sym5-arr','Symphony no. 5 in C minor, op. 67 (arr. for piano)',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES
+		(310,'Symphony no. 5 in C minor, op. 67'),
+		(311,'Symphony no. 5 in C minor, op. 67: I. Allegro con brio'),
+		(312,'Symphony no. 5 in C minor, op. 67: II. Andante con moto'),
+		(313,'Symphony no. 5 in C minor, op. 67: III. Scherzo'),
+		(314,'Symphony no. 5 in C minor, op. 67: IV. Allegro'),
+		(320,'Symphony no. 5 in C minor'),
+		(321,'Symphony no. 5 in C minor, op. 67'),
+		(322,'Symphony no. 5 in C minor, op. 67 (arr. for piano)')`,
+	// composer arcs (l_artist_work 168): Beethoven composes the parent + movements; Brahms the same-title twin.
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES
+		(10,2,50,310,0),(11,2,50,311,0),(12,2,50,312,0),(13,2,50,313,0),(14,2,50,314,0),
+		(15,2,51,320,0),(16,2,50,321,0),(17,2,50,322,0)`,
+	// work-group edges (l_work_work): 281 parts parent(310)->movements(311..314); 350 arrangement 310->322 (excluded).
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES
+		(1,20,310,311,1),(2,20,310,312,2),(3,20,310,313,3),(4,20,310,314,4),
+		(5,21,310,322,0)`,
 }
 
 var dcStmts = []string{

@@ -174,13 +174,18 @@ func firstISRC(concat string) string {
 }
 
 func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, error) {
-	workID, ok, err := m.resolveWorkID(q.Work)
+	composer := ""
+	if names := q.Credits.Names(core.RoleComposer); len(names) > 0 {
+		composer = names[0]
+	}
+	g, ok, err := m.resolveWorkGroup(q.Work, composer)
 	if err != nil {
 		return RecordingResult{}, err
 	}
 	if !ok {
 		return RecordingResult{}, nil // unresolved work → no candidates
 	}
+	inClause, args := intInClause(g.WorkIDs)
 
 	rows, err := m.DB.Query(
 		`SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
@@ -188,10 +193,10 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		   JOIN link l ON l.id = lrw.link
 		   JOIN recording r ON r.id = lrw.entity0
 		   LEFT JOIN isrc i ON i.recording = r.id
-		  WHERE lrw.entity1 = ? AND l.link_type = ?
+		  WHERE lrw.entity1 IN (`+inClause+`) AND l.link_type = ?
 		  GROUP BY r.id
 		  ORDER BY COUNT(i.isrc) DESC, r.id ASC
-		  LIMIT ?`, workID, linkTypePerformance, q.Limit)
+		  LIMIT ?`, append(append([]any{}, args...), linkTypePerformance, q.Limit)...)
 	if err != nil {
 		return RecordingResult{}, err
 	}
@@ -206,12 +211,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		if err := rows.Scan(&id, &gid, &name, &length, &isrcs); err != nil {
 			return RecordingResult{}, err
 		}
-		c := RecordingCandidate{
-			MBID:  core.MBID(gid),
-			ISRC:  core.ISRC(firstISRC(isrcs.String)),
-			Title: name,
-			Match: Match{},
-		}
+		c := RecordingCandidate{MBID: core.MBID(gid), ISRC: core.ISRC(firstISRC(isrcs.String)), Title: name, Match: Match{}}
 		if length.Valid {
 			c.DurationS = int(length.Int64 / 1000)
 		}
@@ -226,19 +226,16 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		return RecordingResult{}, err
 	}
 
-	// Apply credit filter: ALL requested credits must match (AND semantics),
-	// with the conductor→chorus_master umbrella.
-	cands = filterByCredits(cands, q.Credits)
+	cands = filterByCredits(cands, performerCredits(q.Credits))
 
-	// Warning: unfiltered work query that was truncated by limit.
 	var warnings []string
-	if len(q.Credits) == 0 {
+	if len(performerCredits(q.Credits)) == 0 {
 		var total int
-		err := m.DB.QueryRow(
+		if err := m.DB.QueryRow(
 			`SELECT COUNT(DISTINCT lrw.entity0) FROM l_recording_work lrw
 			   JOIN link l ON l.id = lrw.link
-			  WHERE lrw.entity1 = ? AND l.link_type = ?`, workID, linkTypePerformance).Scan(&total)
-		if err != nil {
+			  WHERE lrw.entity1 IN (`+inClause+`) AND l.link_type = ?`,
+			append(append([]any{}, args...), linkTypePerformance)...).Scan(&total); err != nil {
 			return RecordingResult{}, err
 		}
 		if total > q.Limit {
@@ -247,6 +244,31 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 				q.Work, total, len(cands)))
 		}
 	}
-
 	return RecordingResult{Candidates: cands, Warnings: warnings}, nil
+}
+
+// intInClause builds a "?,?,?" placeholder list and its args for an IN clause.
+func intInClause(ids []int64) (string, []any) {
+	if len(ids) == 0 {
+		return "NULL", nil
+	}
+	ph := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(ph, ","), args
+}
+
+// performerCredits drops the composer role (a work-level, not recording-level,
+// credit) so the recording --credit filter isn't over-constrained by it.
+func performerCredits(cs core.Credits) core.Credits {
+	var out core.Credits
+	for _, c := range cs {
+		if c.Role != core.RoleComposer {
+			out = append(out, c)
+		}
+	}
+	return out
 }
