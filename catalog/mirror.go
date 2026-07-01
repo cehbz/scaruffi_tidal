@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -83,3 +84,6 @@ func escapeFTS(s string) string {
 
 // ftsTitle builds a title-column FTS phrase: title:"…".
 func ftsTitle(s string) string { return "title:" + escapeFTS(s) }
+
+// isNoRows reports whether err is (or wraps) sql.ErrNoRows.
+func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
