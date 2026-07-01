@@ -31,6 +31,26 @@ func discogsRole(s string) core.Role {
 	}
 }
 
+// discogsRoles maps a Discogs role string to the distinct set of core.Roles it
+// denotes. Discogs credits are free-text and combined ("Composed By, Conductor")
+// and bracket-qualified ("Conductor [Orchestra]"); split on commas, strip the
+// bracketed qualifier from each fragment, map each via discogsRole, and dedupe. One
+// credit can thus satisfy two constraints (a self-conducting composer).
+func discogsRoles(s string) []core.Role {
+	seen := map[core.Role]bool{}
+	var out []core.Role
+	for _, frag := range strings.Split(s, ",") {
+		if i := strings.IndexByte(frag, '['); i >= 0 {
+			frag = frag[:i]
+		}
+		if r := discogsRole(frag); r != "" && !seen[r] {
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // instrumentRole reports whether a role string names a solo instrument/voice.
 func instrumentRole(l string) bool {
 	for _, inst := range []string{

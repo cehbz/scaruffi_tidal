@@ -26,3 +26,37 @@ func TestDiscogsRoleCrosswalk(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscogsRolesCombined(t *testing.T) {
+	cases := map[string][]core.Role{
+		"Composed By, Conductor":           {core.RoleComposer, core.RoleConductor},
+		"Conductor, Composed By":           {core.RoleConductor, core.RoleComposer},
+		"Conductor [Orchestra]":            {core.RoleConductor},
+		"Chorus Master [Camerata Singers]": {core.RoleChorusMaster},
+		"Composed By":                      {core.RoleComposer},
+		"Producer, Engineer":               nil, // neither maps
+		"Cello, Composed By":               {core.RoleSoloist, core.RoleComposer},
+	}
+	for in, want := range cases {
+		got := discogsRoles(in)
+		if !sameRoleSet(got, want) {
+			t.Errorf("discogsRoles(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func sameRoleSet(a, b []core.Role) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := map[core.Role]bool{}
+	for _, r := range a {
+		m[r] = true
+	}
+	for _, r := range b {
+		if !m[r] {
+			return false
+		}
+	}
+	return true
+}
