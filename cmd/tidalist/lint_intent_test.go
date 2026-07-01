@@ -84,3 +84,23 @@ func TestLintIntentReadsStdin(t *testing.T) {
 		t.Errorf("stdin not canonicalized to stdout:\n%s", out)
 	}
 }
+
+// TestLintIntentWriteDoesNotClobberOnError pins a data-integrity invariant: when
+// --write hits a validation error the original file must be left untouched (the
+// error check returns before os.WriteFile). A future reorder that wrote the
+// canonical form before checking HasError would overwrite the user's file with a
+// half-baked result; this guards against that.
+func TestLintIntentWriteDoesNotClobberOnError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bad.md")
+	original := "# Demo\n## T · album\n- pianist: X\n"
+	os.WriteFile(p, []byte(original), 0o644)
+	_, _, err := runLint(t, "", "lint-intent", "--write", p)
+	if err == nil {
+		t.Fatal("expected nonzero exit for validation error")
+	}
+	got, _ := os.ReadFile(p)
+	if string(got) != original {
+		t.Errorf("--write clobbered the file on validation error:\n--- got ---\n%s\n--- want ---\n%s", got, original)
+	}
+}
