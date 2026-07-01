@@ -23,6 +23,7 @@ package catalog
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/cehbz/tidalist/core"
@@ -427,5 +428,142 @@ func TestIntegrationAlbumEditionsDiscogs(t *testing.T) {
 	}
 	if mainCount != 1 {
 		t.Errorf("expected exactly 1 main release among %d editions, got %d", len(eds), mainCount)
+	}
+}
+
+// composersContain reports whether any composer name folds to contain want (normalized).
+func composersContain(cs []string, want string) bool {
+	w := core.NormalizeName(want)
+	for _, c := range cs {
+		if strings.Contains(core.NormalizeName(c), w) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestIntegrationResolvePerformance verifies the federated performance resolver against the
+// real mirrors.  The design is ARTIST-FIRST: MB resolves the work-group and narrows to the
+// performance(s) by the conjunctive performer credit AND; Discogs is corroboration via the
+// bridged artist ids.
+//
+// Anchors (verified live 2026-07-01):
+//   - Beethoven "Symphony no. 5 in C minor, op. 67" — op. 67 is unique to Beethoven, so the
+//     work-group resolves from the title alone (parent work gid
+//     d03bff61-26fc-301b-98ac-4d8e85771cbc, 4 movement sub-works).  Bernstein/NYPhil narrows
+//     to 2 earliest-co-release clusters (1963: 5 movement recordings; 1981: 3), each carrying
+//     the conductor+orchestra credit AND.
+//   - Discogs bridge ids (materialised artist.discogs_artist_id): Beethoven 95544,
+//     Bernstein 299702, New York Philharmonic 327356; Kleiber 833155, Wiener Philharmoniker
+//     754974.  The canonical Kleiber/VPO DG 2530 516 is Discogs master 287096.
+//   - Brahms "Ein deutsches Requiem" and Palestrina "Missa Papae Marcelli" — the motivating
+//     classical compounds that came back EMPTY under the retired top-1 resolveWorkID; both now
+//     resolve as multi-movement work-groups.
+//
+// SCALE FINDING (see .superpowers/sdd/rw-6-report.md): the composer-bridged Discogs discovery
+// query (discogsPerformances) drives an un-indexed full scan of all ~19M dc.release rows — it
+// has no artist-filtered driving table, and SQLite resolves the composer EXISTS via
+// idx_release_artist_artist (~100k credit rows/probe for a prolific composer).  A
+// composer+performer query therefore does NOT complete in feasible time on the full 46 GB
+// mirror (observed: >6 min, no result).  This is the "build-time materialised concordance
+// table (corpus-scale batch)" item already noted in TODO.  Live coverage here exercises the
+// artist-first MB spine with the Discogs scan deliberately fast-exited (composer omitted → no
+// Discogs claim is attempted; or composer-only → no performer, so no claim), and LOGS the
+// cross-source gap rather than asserting a High-confidence reconciliation that cannot be
+// produced live.
+const beethoven5WorkGID = "d03bff61-26fc-301b-98ac-4d8e85771cbc"
+
+func TestIntegrationResolvePerformance(t *testing.T) {
+	m := openRealMirror(t)
+
+	// (a) Artist-first MB narrowing.  Performer-constrained (conductor+orchestra) with the
+	// composer OMITTED so discogsPerformances fast-exits (see the SCALE FINDING above); the
+	// op. 67 title uniquely identifies Beethoven's 5th, so title-only work resolution is safe.
+	res, err := m.ResolvePerformance(PerformanceQuery{
+		Work: "Symphony no. 5 in C minor, op. 67",
+		Credits: core.Credits{
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+		Limit: 25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome == OutcomeAbsent || len(res.Performances) == 0 {
+		t.Fatalf("Bernstein/NYPhil Beethoven 5 must resolve; outcome=%q perfs=%d", res.Outcome, len(res.Performances))
+	}
+
+	// Every returned performance must satisfy the requested performer credit AND.
+	var withRecs *Performance
+	for i := range res.Performances {
+		p := &res.Performances[i]
+		if !p.Credits.MatchesRole(core.RoleConductor, "Leonard Bernstein") {
+			t.Errorf("performance[%d] missing conductor credit; matched=%v", i, p.Credits)
+		}
+		if !p.Credits.MatchesRole(core.RoleOrchestra, "New York Philharmonic") {
+			t.Errorf("performance[%d] missing orchestra credit; matched=%v", i, p.Credits)
+		}
+		if withRecs == nil && len(p.Recordings) > 0 {
+			withRecs = p
+		}
+	}
+	if withRecs == nil {
+		t.Fatal("a returned performance must carry MB movement recordings (the ISRC substrate)")
+	}
+	// Composer-less resolution must still land on the Beethoven work-group.
+	if withRecs.Work.MBID != core.MBID(beethoven5WorkGID) {
+		t.Errorf("resolved work-group gid = %q, want Beethoven 5 %q", withRecs.Work.MBID, beethoven5WorkGID)
+	}
+	if !composersContain(withRecs.Work.Composers, "Beethoven") {
+		t.Errorf("resolved work-group composers %v missing Beethoven", withRecs.Work.Composers)
+	}
+	// The movement recordings carry MB identity (the ISRC substrate; real data may lack ISRCs).
+	if withRecs.Recordings[0].MBID == "" || withRecs.Recordings[0].Title == "" {
+		t.Errorf("movement recording missing identity: %+v", withRecs.Recordings[0])
+	}
+	isrcs := 0
+	for _, r := range withRecs.Recordings {
+		if r.ISRC != "" {
+			isrcs++
+		}
+	}
+	t.Logf("Beethoven5 Bernstein/NYPhil: outcome=%s perfs=%d first-perf year=%d recs=%d isrcs=%d conf=%s sources=%v work=%q composers=%v",
+		res.Outcome, len(res.Performances), withRecs.FirstYear, len(withRecs.Recordings), isrcs,
+		withRecs.Confidence, withRecs.Sources, withRecs.Work.Name, withRecs.Work.Composers)
+	// Discogs cross-source corroboration is NOT asserted: the only query shape that triggers it
+	// (composer + performer) is non-viable live (SCALE FINDING).  On this MB-narrowed path
+	// discogsPerformances fast-exits, so the performance is MB-only / medium by design.
+	if withRecs.Confidence == ConfidenceHigh {
+		t.Logf("NOTE: unexpected High confidence (Discogs corroborated) on the MB-narrowed path: master=%d label=%q",
+			withRecs.DiscogsMaster, withRecs.Label)
+	}
+
+	// (b) The motivating classical compounds must no longer come back empty (they resolved to a
+	// single wrong work — or none — under the retired top-1 resolveWorkID).  Composer-only, so
+	// discogsPerformances fast-exits and the group resolves via the MB 281-parts spine.
+	for _, c := range []struct{ name, work, composer string }{
+		{"Brahms — Ein deutsches Requiem", "Ein deutsches Requiem", "Brahms"},
+		{"Palestrina — Missa Papae Marcelli", "Missa Papae Marcelli", "Palestrina"},
+	} {
+		cr, err := m.ResolvePerformance(PerformanceQuery{
+			Work:    c.work,
+			Credits: core.Credits{{Role: core.RoleComposer, Name: c.composer}},
+			Limit:   10,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if cr.Outcome == OutcomeAbsent {
+			t.Errorf("%s work-group must resolve (was empty under top-1 resolveWorkID); outcome=absent", c.name)
+		}
+		if len(cr.Performances) == 0 {
+			t.Errorf("%s must surface at least one performance", c.name)
+		}
+		recs := 0
+		if len(cr.Performances) > 0 {
+			recs = len(cr.Performances[0].Recordings)
+		}
+		t.Logf("%s: outcome=%s perfs=%d first-perf recs=%d", c.name, cr.Outcome, len(cr.Performances), recs)
 	}
 }
