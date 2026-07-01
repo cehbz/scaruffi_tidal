@@ -3,6 +3,8 @@ package catalog
 import (
 	"database/sql"
 	"sort"
+	"strings"
+	"unicode"
 
 	"github.com/cehbz/tidalist/core"
 )
@@ -213,6 +215,61 @@ func matchedForces(have, want core.Credits) core.Credits {
 	return out
 }
 
+// workStop drops pure connectors so the work match keys on the distinctive
+// form word(s) + number, not on filler.
+var workStop = map[string]bool{"in": true, "of": true, "the": true, "for": true, "a": true, "and": true, "on": true, "de": true}
+
+// significantWorkTokens lowercases and splits a work title into content tokens
+// (letters/digits), dropping connectors.
+func significantWorkTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if !workStop[t] {
+			out[t] = true
+		}
+	}
+	return out
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// albumMatchesWork reports whether an album's text (title ∪ track titles) is plausibly
+// the work. The composer already fixes the composer; this only disambiguates WHICH of
+// that composer's works. Rule: share ≥1 non-digit content token (the form/name) AND,
+// when the work carries digit tokens (opus/number), share ≥1 of them (so a No. 7 album
+// can't match a No. 5 work). Loose by design — a ranker, never a gate.
+func albumMatchesWork(work map[string]bool, albumText string) bool {
+	if len(work) == 0 {
+		return false
+	}
+	album := significantWorkTokens(albumText)
+	sharedWord, sharedDigit := false, false
+	workHasDigit := false
+	for t := range work {
+		if isDigits(t) {
+			workHasDigit = true
+			if album[t] {
+				sharedDigit = true
+			}
+		} else if album[t] {
+			sharedWord = true
+		}
+	}
+	if !sharedWord {
+		return false
+	}
+	return !workHasDigit || sharedDigit
+}
+
 // dcPerf is a Discogs-side performance candidate: a master whose track/title matches
 // the work and whose release_artist roles satisfy the bridged credit AND.
 type dcPerf struct {
@@ -226,41 +283,60 @@ type dcPerf struct {
 	viaFallback bool
 }
 
-// discogsPerformances returns Discogs masters matching the work title whose main
-// release satisfies EVERY requested performer credit via the crossed-artist-id
-// bridge (role-normalised). year/label/catno ride along as within-block attributes.
+// discogsPerformances finds Discogs ALBUMS (masters) that are a performance of the
+// work by these forces — ARTIST-FIRST: the composer's bridged id (required) plus ≥1
+// performer-constraint bridged id generate candidates via the bridge (no title gate);
+// a loose work-token filter keeps the albums that are THIS work. Each candidate carries
+// its album artist ids for RW-3 confidence grading. Returns nil when the composer has
+// no Discogs identity (no work-identity anchor → no claim).
 func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
-	want := performerCredits(q.Credits)
-
-	// Resolve each requested credit to a Discogs artist id via the bridge.
-	var wantIDs []creditID
-	fallbackUsed := false
-	for _, w := range want {
-		id, viaFallback, ok, err := m.bridgedDiscogsID(w.Name)
+	// Composer is REQUIRED (it disambiguates same-numbered works across composers).
+	composerNames := q.Credits.Names(core.RoleComposer)
+	if len(composerNames) == 0 {
+		return nil, nil
+	}
+	composerID, _, ok, err := m.bridgedDiscogsID(composerNames[0])
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	// Performer constraint ids (conductor/orchestra/soloist/chorus).
+	var performerIDs []int64
+	for _, c := range performerCredits(q.Credits) {
+		id, _, ok, err := m.bridgedDiscogsID(c.Name)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			// A requested force with no Discogs identity → no Discogs performance can
-			// satisfy the AND; return nothing (MB may still resolve).
-			return nil, nil
+		if ok {
+			performerIDs = append(performerIDs, id)
 		}
-		fallbackUsed = fallbackUsed || viaFallback
-		wantIDs = append(wantIDs, creditID{role: w.Role, id: id})
+	}
+	if len(performerIDs) == 0 {
+		return nil, nil // a performance is identified by its performers
 	}
 
+	// Candidate masters: composer appears AND ≥1 performer appears, credit anywhere on
+	// the album (release_artist ∪ track_artist). Two EXISTS over indexed artist_id.
+	perfIn, perfArgs := intInClause(performerIDs)
+	args := append([]any{composerID, composerID}, perfArgs...)
+	args = append(args, perfArgs...)
 	rows, err := m.DB.Query(
-		`SELECT m.id, m.main_release_id, m.year
-		   FROM dc.master_fts f
-		   JOIN dc.master m ON m.id = f.rowid
-		  WHERE master_fts MATCH ?
-		  ORDER BY f.rank
-		  LIMIT ?`, ftsTitle(q.Work), max(q.Limit, 25))
+		`SELECT DISTINCT m.id, m.main_release_id, m.year
+		   FROM dc.master m
+		   JOIN dc.release r ON r.master_id = m.id
+		  WHERE ( EXISTS(SELECT 1 FROM dc.release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?)
+		       OR EXISTS(SELECT 1 FROM dc.track_artist ta JOIN dc.track t ON t.id=ta.track_id WHERE t.release_id=r.id AND ta.artist_id=?) )
+		    AND ( EXISTS(SELECT 1 FROM dc.release_artist ra WHERE ra.release_id=r.id AND ra.artist_id IN (`+perfIn+`))
+		       OR EXISTS(SELECT 1 FROM dc.track_artist ta JOIN dc.track t ON t.id=ta.track_id WHERE t.release_id=r.id AND ta.artist_id IN (`+perfIn+`)) )`,
+		args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	work := significantWorkTokens(q.Work)
 	var out []dcPerf
 	for rows.Next() {
 		var masterID, mainRelease int64
@@ -268,22 +344,29 @@ func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
 		if err := rows.Scan(&masterID, &mainRelease, &year); err != nil {
 			return nil, err
 		}
-		ra, err := m.releaseArtists(mainRelease)
+		// Confirm the composer's role-set includes composer (not merely that the artist
+		// appears), then loose work-token filter over title ∪ track titles.
+		hasComposer, err := m.albumHasArtistWithRole(mainRelease, composerID, core.RoleComposer)
 		if err != nil {
 			return nil, err
 		}
-		if !releaseSatisfies(ra, wantIDs) {
+		if !hasComposer {
 			continue
 		}
-		dp := dcPerf{MasterID: masterID, viaFallback: fallbackUsed}
+		text, err := m.albumText(mainRelease)
+		if err != nil {
+			return nil, err
+		}
+		if !albumMatchesWork(work, text) {
+			continue
+		}
+		ids, err := m.albumArtistIDs(mainRelease)
+		if err != nil {
+			return nil, err
+		}
+		dp := dcPerf{MasterID: masterID, ArtistIDs: ids}
 		if year.Valid {
 			dp.Year = int(year.Int64)
-		}
-		for _, a := range ra {
-			dp.ArtistIDs = append(dp.ArtistIDs, a.id)
-			if r := discogsRole(a.role); r != "" {
-				dp.Credits = append(dp.Credits, core.Credit{Role: r, Name: a.name})
-			}
 		}
 		dp.LabelID, dp.Label, dp.Catno, err = m.mainReleaseLabel(mainRelease)
 		if err != nil {
@@ -292,6 +375,79 @@ func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
 		out = append(out, dp)
 	}
 	return out, rows.Err()
+}
+
+// albumHasArtistWithRole reports whether artistID is credited on the album (release-
+// or track-level) with a role whose parsed role-SET contains want (conductor umbrella:
+// a wanted conductor also matches chorus_master).
+func (m *MirrorDB) albumHasArtistWithRole(releaseID, artistID int64, want core.Role) (bool, error) {
+	rows, err := m.DB.Query(
+		`SELECT role FROM dc.release_artist WHERE release_id=? AND artist_id=?
+		 UNION ALL
+		 SELECT ta.role FROM dc.track_artist ta JOIN dc.track t ON t.id=ta.track_id
+		  WHERE t.release_id=? AND ta.artist_id=?`, releaseID, artistID, releaseID, artistID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role sql.NullString
+		if err := rows.Scan(&role); err != nil {
+			return false, err
+		}
+		for _, r := range discogsRoles(role.String) {
+			if r == want || (want == core.RoleConductor && r == core.RoleChorusMaster) {
+				return true, nil
+			}
+		}
+	}
+	return false, rows.Err()
+}
+
+// albumArtistIDs returns the distinct artist ids credited on the album (release ∪ track).
+func (m *MirrorDB) albumArtistIDs(releaseID int64) ([]int64, error) {
+	rows, err := m.DB.Query(
+		`SELECT artist_id FROM dc.release_artist WHERE release_id=?
+		 UNION
+		 SELECT ta.artist_id FROM dc.track_artist ta JOIN dc.track t ON t.id=ta.track_id WHERE t.release_id=?`,
+		releaseID, releaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// albumText concatenates the release title and its track titles (the work evidence).
+func (m *MirrorDB) albumText(releaseID int64) (string, error) {
+	var b strings.Builder
+	var title sql.NullString
+	if err := m.DB.QueryRow(`SELECT title FROM dc.release WHERE id=?`, releaseID).Scan(&title); err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	b.WriteString(title.String)
+	rows, err := m.DB.Query(`SELECT title FROM dc.track WHERE release_id=? AND parent_track_id IS NULL`, releaseID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t sql.NullString
+		if err := rows.Scan(&t); err != nil {
+			return "", err
+		}
+		b.WriteByte(' ')
+		b.WriteString(t.String)
+	}
+	return b.String(), rows.Err()
 }
 
 // reconcile matches each MB performance to at most one Discogs candidate by crossed
@@ -383,62 +539,6 @@ func abs(x int) int {
 		return -x
 	}
 	return x
-}
-
-type dcReleaseArtist struct {
-	id   int64
-	name string
-	role string
-}
-
-func (m *MirrorDB) releaseArtists(releaseID int64) ([]dcReleaseArtist, error) {
-	rows, err := m.DB.Query(
-		`SELECT ra.artist_id, COALESCE(a.name,''), COALESCE(ra.role,'')
-		   FROM dc.release_artist ra
-		   LEFT JOIN dc.artist a ON a.id = ra.artist_id
-		  WHERE ra.release_id = ?
-		  ORDER BY ra.seq`, releaseID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []dcReleaseArtist
-	for rows.Next() {
-		var ra dcReleaseArtist
-		if err := rows.Scan(&ra.id, &ra.name, &ra.role); err != nil {
-			return nil, err
-		}
-		out = append(out, ra)
-	}
-	return out, rows.Err()
-}
-
-// creditID is a requested (role, Discogs-artist-id) constraint.
-type creditID struct {
-	role core.Role
-	id   int64
-}
-
-// releaseSatisfies reports whether every requested (role,id) is present among the
-// release's artists with a role-compatible credit (conductor umbrella included).
-func releaseSatisfies(ra []dcReleaseArtist, want []creditID) bool {
-	for _, w := range want {
-		ok := false
-		for _, a := range ra {
-			if a.id != w.id {
-				continue
-			}
-			r := discogsRole(a.role)
-			if r == w.role || (w.role == core.RoleConductor && r == core.RoleChorusMaster) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // mainReleaseLabel returns the first label (id, name, catno) of the release.

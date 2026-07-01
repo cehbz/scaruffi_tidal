@@ -12,9 +12,10 @@ func TestDiscogsArtistIDBridge(t *testing.T) {
 	if !ok || id != 299702 {
 		t.Fatalf("bridge(60) = %d,%v, want 299702,true", id, ok)
 	}
-	// A MB artist with a NULL bridge → not ok.
-	if _, ok, _ := m.discogsArtistID(50); ok {
-		t.Error("artist 50 (Beethoven) has no discogs_artist_id in the fixture; want ok=false")
+	// A MB artist with a NULL bridge → not ok. (Beethoven(50) is now bridged to 952 for
+	// the artist-first Discogs rework, so use Palestrina(3), which stays unbridged.)
+	if _, ok, _ := m.discogsArtistID(3); ok {
+		t.Error("artist 3 (Palestrina) has no discogs_artist_id in the fixture; want ok=false")
 	}
 }
 

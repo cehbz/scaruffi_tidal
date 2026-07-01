@@ -151,7 +151,7 @@ var mbStmts = []string{
 	// --- work-group (slice 2e): 281 parts, 350 arrangement (excluded) ---
 	`INSERT INTO link (id, link_type) VALUES (20,281),(21,350)`,
 	// Parent work + four movements (work-group via l_work_work 281 parts).
-	`INSERT INTO artist (id, gid, name, comment, type) VALUES (50,'a-beethoven','Ludwig van Beethoven','',1)`,
+	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (50,'a-beethoven','Ludwig van Beethoven','',1,952)`,
 	`INSERT INTO artist (id, gid, name, comment, type) VALUES (51,'a-brahms','Johannes Brahms','',1)`,
 	`INSERT INTO work (id, gid, name, type, comment) VALUES (310,'w-sym5','Symphony no. 5 in C minor, op. 67',1,'')`,
 	`INSERT INTO work (id, gid, name, type, comment) VALUES (311,'w-sym5-i','Symphony no. 5 in C minor, op. 67: I. Allegro con brio',1,'')`,
@@ -244,6 +244,7 @@ var dcStmts = []string{
 	`CREATE TABLE master_style (master_id INTEGER, seq INTEGER, style TEXT)`,
 	`CREATE TABLE release (id INTEGER PRIMARY KEY, master_id INTEGER, is_main_release INTEGER, title TEXT, country TEXT, released_raw TEXT)`,
 	`CREATE TABLE track (id INTEGER PRIMARY KEY, release_id INTEGER, parent_track_id INTEGER, seq INTEGER, position TEXT, title TEXT, duration TEXT)`,
+	`CREATE TABLE track_artist (id INTEGER PRIMARY KEY, track_id INTEGER, artist_id INTEGER, role TEXT, kind TEXT)`,
 	`INSERT INTO master (id, main_release_id, title, year) VALUES (69017, 583800, 'John Barleycorn Must Die', 1970)`,
 	`INSERT INTO master_fts (rowid, title, artist_names) VALUES (69017, 'John Barleycorn Must Die', 'Traffic')`,
 	`INSERT INTO master_artist (master_id, seq, artist_id) VALUES (69017, 1, 900)`,
@@ -270,24 +271,30 @@ var dcStmts = []string{
 	`CREATE TABLE label (id INTEGER PRIMARY KEY, name TEXT)`,
 	`CREATE TABLE label_relationship (parent_label_id INTEGER, sublabel_id INTEGER)`,
 	// Discogs artists (bridge targets): 299702 Bernstein, 950 NYPhil.
-	`INSERT INTO artist (id, name) VALUES (299702,'Leonard Bernstein'),(950,'New York Philharmonic'),(951,'Wiener Philharmoniker')`,
+	`INSERT INTO artist (id, name) VALUES (299702,'Leonard Bernstein'),(950,'New York Philharmonic'),(951,'Wiener Philharmoniker'),(952,'Ludwig van Beethoven'),(953,'Gustav Mahler')`,
 	// Labels + a family (Columbia is the parent of CBS).
 	`INSERT INTO label (id, name) VALUES (10,'Columbia'),(11,'CBS'),(12,'Deutsche Grammophon')`,
 	`INSERT INTO label_relationship (parent_label_id, sublabel_id) VALUES (10,11)`,
 	// MASTER A (1963) on CBS (sublabel of Columbia); MASTER B (1985) on Deutsche Grammophon.
 	`INSERT INTO master (id, main_release_id, title, year) VALUES (70000,60000,'Beethoven: Symphony No. 5',1963)`,
 	`INSERT INTO master (id, main_release_id, title, year) VALUES (70001,60001,'Beethoven: Symphony No. 5',1985)`,
+	`INSERT INTO master (id, main_release_id, title, year) VALUES (70002,60002,'Mahler: Symphony No. 5',1961)`,
 	`INSERT INTO master_fts (rowid, title, artist_names) VALUES
 		(70000,'Beethoven: Symphony No. 5','Leonard Bernstein'),
 		(70001,'Beethoven: Symphony No. 5','Leonard Bernstein')`,
 	`INSERT INTO release (id, master_id, is_main_release, title, country, released_raw) VALUES
 		(60000,70000,1,'Beethoven: Symphony No. 5','US','1963'),
 		(60001,70001,1,'Beethoven: Symphony No. 5','DE','1985')`,
+	`INSERT INTO release (id, master_id, is_main_release, title, country, released_raw) VALUES (60002,70002,1,'Mahler: Symphony No. 5','US','1961')`,
 	`INSERT INTO release_artist (id, release_id, seq, artist_id, role, kind) VALUES
-		(1,60000,1,299702,'Conductor','artist'),
-		(2,60000,2,950,'Orchestra','artist'),
-		(3,60001,1,299702,'Conducted By','artist'),
-		(4,60001,2,951,'Orchestra','artist')`,
+		(1,60000,1,952,'Composed By','artist'),
+		(2,60000,2,299702,'Conductor','artist'),
+		(3,60000,3,950,'Orchestra','artist'),
+		(4,60001,1,952,'Composed By','artist'),
+		(5,60001,2,299702,'Conductor, Producer','artist'),
+		(6,60002,1,953,'Composed By','artist'),
+		(7,60002,2,299702,'Conductor','artist'),
+		(8,60002,3,950,'Orchestra','artist')`,
 	`INSERT INTO release_label (release_id, seq, label_id, name, catno) VALUES
 		(60000,1,11,'CBS','MS 6468'),
 		(60001,1,12,'Deutsche Grammophon','DG 415 861-2')`,

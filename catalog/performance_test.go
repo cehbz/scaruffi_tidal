@@ -77,85 +77,64 @@ func perfsYears(ps []Performance) []int {
 	return out
 }
 
-func TestDiscogsPerformancesViaBridge(t *testing.T) {
-	m := newTestMirror(t)
-	q := PerformanceQuery{
-		Work: "Beethoven: Symphony No. 5",
+func beethovenPerfQuery() PerformanceQuery {
+	return PerformanceQuery{
+		// FORMAL work title (divergent from the album-style Discogs title). Artist-first
+		// discovery must still find the albums via the bridged ids, not the title.
+		Work: "Symphony no. 5 in C minor, op. 67",
 		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Beethoven"},
 			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
 			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 		},
 		Limit: 10,
+	}
+}
+
+func TestDiscogsPerformancesArtistFirstComposerRequired(t *testing.T) {
+	m := newTestMirror(t)
+	dps, err := m.discogsPerformances(beethovenPerfQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]bool{}
+	for _, d := range dps {
+		got[d.MasterID] = true
+	}
+	// MASTER A (full) and MASTER B (partial) are Beethoven 5th by Bernstein → found via
+	// the bridge despite the formal query not phrase-matching the album title.
+	if !got[70000] || !got[70001] {
+		t.Fatalf("expected MASTER A(70000)+B(70001) via artist-first bridge; got %v", got)
+	}
+	// DECOY (70002) is a Mahler 5th by the SAME performers — the composer requirement
+	// must exclude it (a bare "Symphony No. 5" is composer-ambiguous).
+	if got[70002] {
+		t.Error("wrong-composer decoy (Mahler 5th) must be excluded by the composer requirement")
+	}
+}
+
+func TestDiscogsPerformancesNoComposerNoClaim(t *testing.T) {
+	m := newTestMirror(t)
+	q := beethovenPerfQuery()
+	q.Credits = core.Credits{ // performers but NO composer
+		{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+		{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 	}
 	dps, err := m.discogsPerformances(q)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only MASTER A (70000) carries BOTH bridged forces (Bernstein 299702 + NYPhil 950).
-	var found *dcPerf
-	for i := range dps {
-		if dps[i].MasterID == 70000 {
-			found = &dps[i]
-		}
-	}
-	if found == nil {
-		t.Fatalf("MASTER A (Bernstein+NYPhil) must resolve via the bridge; got %+v", dps)
-	}
-	if found.Year != 1963 || found.Label != "CBS" || found.Catno != "MS 6468" {
-		t.Errorf("master A attrs = year %d label %q catno %q", found.Year, found.Label, found.Catno)
+	if len(dps) != 0 {
+		t.Errorf("no composer → no Discogs claim (never a token-only match); got %d", len(dps))
 	}
 }
 
-func TestReconcileCrossSourceAgreementIsHigh(t *testing.T) {
-	m := newTestMirror(t)
-	g := beethovenGroup(t, m)
-	q := PerformanceQuery{
-		Work: "Symphony no. 5 in C minor, op. 67",
-		Credits: core.Credits{
-			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
-			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
-		},
-		Limit: 10,
+func TestAlbumMatchesWorkDisambiguatesNumber(t *testing.T) {
+	work := significantWorkTokens("Symphony no. 5 in C minor, op. 67")
+	if !albumMatchesWork(work, "Beethoven: Symphony No. 5") {
+		t.Error("the 5th album must match the 5th work")
 	}
-	mb, err := m.mbPerformances(g, q)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Discogs query uses the album-level title; both takes share it, but only MASTER A
-	// carries NYPhil, so only the 1963 MB performance reconciles.
-	dq := q
-	dq.Work = "Beethoven: Symphony No. 5"
-	dc, err := m.discogsPerformances(dq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	perfs, warns, err := m.reconcile(mb, dc, q)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = warns
-	var a1963 *Performance
-	for i := range perfs {
-		if perfs[i].FirstYear == 1963 {
-			a1963 = &perfs[i]
-		}
-	}
-	if a1963 == nil {
-		t.Fatal("the 1963 MB performance must survive reconciliation")
-	}
-	if a1963.Confidence != ConfidenceHigh {
-		t.Errorf("cross-source agreement must be high, got %q", a1963.Confidence)
-	}
-	if a1963.DiscogsMaster != 70000 || a1963.Label != "CBS" || a1963.Catno != "MS 6468" {
-		t.Errorf("1963 dual identity = master %d label %q catno %q", a1963.DiscogsMaster, a1963.Label, a1963.Catno)
-	}
-	// The 1985 MB performance (Bernstein+NYPhil label in MB, but Discogs MASTER B is
-	// Wiener) has no Discogs agreement → stays medium, no master.
-	for i := range perfs {
-		if perfs[i].FirstYear == 1985 {
-			if perfs[i].Confidence != ConfidenceMedium || perfs[i].DiscogsMaster != 0 {
-				t.Errorf("1985 must stay MB-only/medium; got conf %q master %d", perfs[i].Confidence, perfs[i].DiscogsMaster)
-			}
-		}
+	if albumMatchesWork(work, "Beethoven: Symphony No. 7 in A major") {
+		t.Error("a 7th album must NOT match the 5th work (number disambiguates)")
 	}
 }
