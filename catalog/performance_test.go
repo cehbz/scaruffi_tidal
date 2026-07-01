@@ -171,3 +171,84 @@ func TestAlbumMatchesWorkDisambiguatesNumber(t *testing.T) {
 		t.Error("a 7th album must NOT match the 5th work (number disambiguates)")
 	}
 }
+
+func TestResolvePerformanceCandidatesWhenAmbiguous(t *testing.T) {
+	m := newTestMirror(t)
+	q := beethovenPerfQuery() // FORMAL title; no year selector.
+	res, err := m.ResolvePerformance(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two takes, no year/label selector → surface candidates, never substitute one.
+	if res.Outcome != OutcomeCandidates {
+		t.Fatalf("two unseparated takes → candidates, got %q (%d perfs)", res.Outcome, len(res.Performances))
+	}
+	if len(res.Performances) != 2 {
+		t.Fatalf("want both takes surfaced, got %d", len(res.Performances))
+	}
+	byYear := map[int]Performance{}
+	for _, p := range res.Performances {
+		byYear[p.FirstYear] = p
+	}
+	if p, ok := byYear[1963]; !ok || p.Confidence != ConfidenceHigh {
+		t.Errorf("1963 take (full-constraint reconciliation) should be high, got %+v", byYear[1963])
+	}
+	if p, ok := byYear[1985]; !ok || p.Confidence != ConfidenceMedium {
+		t.Errorf("1985 take (partial-constraint reconciliation) should be medium, got %+v", byYear[1985])
+	}
+}
+
+func TestResolvePerformanceCapturesWithYearSelector(t *testing.T) {
+	m := newTestMirror(t)
+	q := beethovenPerfQuery() // FORMAL title
+	q.Year = 1963
+	res, err := m.ResolvePerformance(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != OutcomeCaptured {
+		t.Fatalf("year 1963 selects one take → captured, got %q", res.Outcome)
+	}
+	if len(res.Performances) != 1 || res.Performances[0].FirstYear != 1963 {
+		t.Fatalf("captured perf = %+v", res.Performances)
+	}
+	if res.Performances[0].Confidence != ConfidenceHigh {
+		t.Errorf("the 1963 take reconciles with Discogs → high, got %q", res.Performances[0].Confidence)
+	}
+}
+
+func TestResolvePerformanceAbsentWorkGroup(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.ResolvePerformance(PerformanceQuery{
+		Work:    "Concerto for Nonexistent Instrument",
+		Credits: core.Credits{{Role: core.RoleComposer, Name: "Nobody"}},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != OutcomeAbsent {
+		t.Errorf("unresolvable work-group → absent, got %q", res.Outcome)
+	}
+	if len(res.Performances) != 0 {
+		t.Errorf("absent must carry no performances, got %d", len(res.Performances))
+	}
+}
+
+func TestResolvePerformanceYearMissWarnsNotSubstitutes(t *testing.T) {
+	m := newTestMirror(t)
+	q := beethovenPerfQuery() // FORMAL title
+	q.Year = 1972             // matches neither 1963 nor 1985 within ±2
+	res, err := m.ResolvePerformance(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The performance exists; the requested vintage doesn't → surface candidates + warn,
+	// never fabricate a match.
+	if res.Outcome != OutcomeCandidates {
+		t.Errorf("year miss → candidates (never substitute), got %q", res.Outcome)
+	}
+	if len(res.Warnings) == 0 {
+		t.Error("a year selector that matches nothing must warn")
+	}
+}

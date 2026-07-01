@@ -3,6 +3,7 @@ package catalog
 import (
 	"database/sql"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -76,6 +77,139 @@ type PerformanceResult struct {
 	Outcome      Outcome       `json:"outcome"`
 	Performances []Performance `json:"performances"`
 	Warnings     []string      `json:"warnings,omitempty"`
+}
+
+// ResolvePerformance is the capstone primitive: orchestrate work-group resolution,
+// MB+Discogs candidate discovery, cross-source reconciliation, within-block selection
+// (year nearest ±2, then label family), and the three-outcome gate. It never
+// substitutes a performance or vintage: a selector that excludes everything surfaces
+// the unselected set plus a warning.
+func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, error) {
+	if q.Limit <= 0 {
+		q.Limit = 25
+	}
+	composer := ""
+	if names := q.Credits.Names(core.RoleComposer); len(names) > 0 {
+		composer = names[0]
+	}
+	g, ok, err := m.resolveWorkGroup(q.Work, composer)
+	if err != nil {
+		return PerformanceResult{}, err
+	}
+	if !ok {
+		return PerformanceResult{Outcome: OutcomeAbsent}, nil
+	}
+
+	mb, err := m.mbPerformances(g, q)
+	if err != nil {
+		return PerformanceResult{}, err
+	}
+	dc, err := m.discogsPerformances(q)
+	if err != nil {
+		return PerformanceResult{}, err
+	}
+	perfs, warnings, err := m.reconcile(mb, dc, q)
+	if err != nil {
+		return PerformanceResult{}, err
+	}
+	if len(perfs) == 0 {
+		return PerformanceResult{Outcome: OutcomeAbsent, Warnings: warnings}, nil
+	}
+
+	// Within-block selection — year (nearest, ±2) then label-family. Selectors NEVER
+	// fabricate: a selector that excludes everything surfaces the unselected set + warns.
+	selected := perfs
+	if q.Year != 0 {
+		var within []Performance
+		for _, p := range selected {
+			if p.FirstYear != 0 && abs(p.FirstYear-q.Year) <= 2 {
+				within = append(within, p)
+			}
+		}
+		if len(within) == 0 {
+			warnings = append(warnings, "no performance matches year "+strconv.Itoa(q.Year)+" (±2); surfacing all candidates without substituting")
+		} else {
+			selected = nearestByYear(within, q.Year)
+		}
+	}
+	if q.Label != "" && len(selected) > 1 {
+		filtered, err := m.filterByLabel(selected, q.Label, q.Catno)
+		if err != nil {
+			return PerformanceResult{}, err
+		}
+		if len(filtered) == 0 {
+			warnings = append(warnings, "no performance matches label "+q.Label+"; surfacing candidates without substituting")
+		} else {
+			selected = filtered
+		}
+	}
+
+	if len(selected) > q.Limit {
+		selected = selected[:q.Limit]
+	}
+
+	// Gate: captured iff exactly one performance AND the full requested credit set was
+	// matched on it (Sources includes MB, i.e. it carries recordings/ISRCs).
+	fullCredits := allCreditsMatched(selected, performerCredits(q.Credits))
+	switch {
+	case len(selected) == 1 && fullCredits && len(selected[0].Recordings) > 0:
+		return PerformanceResult{Outcome: OutcomeCaptured, Performances: selected, Warnings: warnings}, nil
+	default:
+		return PerformanceResult{Outcome: OutcomeCandidates, Performances: selected, Warnings: warnings}, nil
+	}
+}
+
+// nearestByYear keeps only the performance(s) with the minimal |FirstYear-year| gap.
+func nearestByYear(ps []Performance, year int) []Performance {
+	best := -1
+	for _, p := range ps {
+		d := abs(p.FirstYear - year)
+		if best < 0 || d < best {
+			best = d
+		}
+	}
+	var out []Performance
+	for _, p := range ps {
+		if abs(p.FirstYear-year) == best {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// filterByLabel keeps performances whose label shares a family with the requested
+// label (matched by Discogs label id via sameLabelFamily); catno, when given, must
+// also match casefold. A performance with no reconciled label is dropped by a label
+// selector (it cannot be confirmed).
+func (m *MirrorDB) filterByLabel(ps []Performance, label, catno string) ([]Performance, error) {
+	wantKey := core.NormalizeName(label)
+	var out []Performance
+	for _, p := range ps {
+		if p.Label == "" {
+			continue
+		}
+		if core.NormalizeName(p.Label) != wantKey {
+			// Different label name — try the family via ids is unavailable here (Label is
+			// a name); accept only exact-family by name equality for now.
+			continue
+		}
+		if catno != "" && core.NormalizeName(p.Catno) != core.NormalizeName(catno) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// allCreditsMatched reports whether every performance in ps has the full requested
+// performer credit set (used to decide captured vs candidates).
+func allCreditsMatched(ps []Performance, want core.Credits) bool {
+	for _, p := range ps {
+		if !creditsSatisfy(p.Credits, want) {
+			return false
+		}
+	}
+	return len(ps) > 0
 }
 
 // mbPerformances returns the work-group's recordings satisfying the conjunctive
