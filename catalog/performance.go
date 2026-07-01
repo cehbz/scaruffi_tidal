@@ -294,6 +294,97 @@ func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
 	return out, rows.Err()
 }
 
+// reconcile matches each MB performance to at most one Discogs candidate by crossed
+// artist-id overlap (the query forces' Discogs ids) plus year proximity, promoting a
+// match to ConfidenceHigh with dual identity (DiscogsMaster/Label/Catno,
+// Sources=[MusicBrainz,Discogs]). Unmatched MB performances stay ConfidenceMedium.
+// Unused Discogs candidates are appended as Discogs-only ConfidenceLow performances.
+func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) ([]Performance, []string, error) {
+	// The query forces' Discogs ids (shared across all MB performances of this query).
+	var forceIDs []int64
+	var warnings []string
+	for _, w := range performerCredits(q.Credits) {
+		id, viaFallback, ok, err := m.bridgedDiscogsID(w.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			forceIDs = append(forceIDs, id)
+			if viaFallback {
+				warnings = append(warnings, "discogs bridge for "+w.Name+" via name-match fallback (unlinked or dangling id)")
+			}
+		}
+	}
+
+	used := make([]bool, len(dc))
+	for i := range mb {
+		best := -1
+		for j := range dc {
+			if used[j] {
+				continue
+			}
+			if !sharesAnyID(forceIDs, dc[j].ArtistIDs) {
+				continue
+			}
+			if mb[i].FirstYear != 0 && dc[j].Year != 0 && abs(mb[i].FirstYear-dc[j].Year) > 2 {
+				continue
+			}
+			best = j
+			break
+		}
+		if best < 0 {
+			continue
+		}
+		d := dc[best]
+		used[best] = true
+		mb[i].DiscogsMaster = core.DiscogsMasterID(d.MasterID)
+		mb[i].Label = d.Label
+		mb[i].Catno = d.Catno
+		mb[i].Sources = []core.Source{core.SourceMusicBrainz, core.SourceDiscogs}
+		mb[i].Confidence = ConfidenceHigh
+	}
+
+	// Discogs-only performances (no MB agreement) → surfaced at low confidence.
+	for j := range dc {
+		if used[j] {
+			continue
+		}
+		mb = append(mb, Performance{
+			Work:          WorkRef{}, // no MB work identity on a Discogs-only candidate
+			Credits:       dc[j].Credits,
+			FirstYear:     dc[j].Year,
+			DiscogsMaster: core.DiscogsMasterID(dc[j].MasterID),
+			Label:         dc[j].Label,
+			Catno:         dc[j].Catno,
+			Sources:       []core.Source{core.SourceDiscogs},
+			Confidence:    ConfidenceLow,
+		})
+	}
+	return mb, warnings, nil
+}
+
+// sharesAnyID reports whether a and b have at least one int64 in common.
+func sharesAnyID(a, b []int64) bool {
+	set := map[int64]bool{}
+	for _, x := range a {
+		set[x] = true
+	}
+	for _, y := range b {
+		if set[y] {
+			return true
+		}
+	}
+	return false
+}
+
+// abs returns the absolute value of x.
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 type dcReleaseArtist struct {
 	id   int64
 	name string

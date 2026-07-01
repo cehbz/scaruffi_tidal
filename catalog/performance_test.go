@@ -105,3 +105,57 @@ func TestDiscogsPerformancesViaBridge(t *testing.T) {
 		t.Errorf("master A attrs = year %d label %q catno %q", found.Year, found.Label, found.Catno)
 	}
 }
+
+func TestReconcileCrossSourceAgreementIsHigh(t *testing.T) {
+	m := newTestMirror(t)
+	g := beethovenGroup(t, m)
+	q := PerformanceQuery{
+		Work: "Symphony no. 5 in C minor, op. 67",
+		Credits: core.Credits{
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+		Limit: 10,
+	}
+	mb, err := m.mbPerformances(g, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Discogs query uses the album-level title; both takes share it, but only MASTER A
+	// carries NYPhil, so only the 1963 MB performance reconciles.
+	dq := q
+	dq.Work = "Beethoven: Symphony No. 5"
+	dc, err := m.discogsPerformances(dq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perfs, warns, err := m.reconcile(mb, dc, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = warns
+	var a1963 *Performance
+	for i := range perfs {
+		if perfs[i].FirstYear == 1963 {
+			a1963 = &perfs[i]
+		}
+	}
+	if a1963 == nil {
+		t.Fatal("the 1963 MB performance must survive reconciliation")
+	}
+	if a1963.Confidence != ConfidenceHigh {
+		t.Errorf("cross-source agreement must be high, got %q", a1963.Confidence)
+	}
+	if a1963.DiscogsMaster != 70000 || a1963.Label != "CBS" || a1963.Catno != "MS 6468" {
+		t.Errorf("1963 dual identity = master %d label %q catno %q", a1963.DiscogsMaster, a1963.Label, a1963.Catno)
+	}
+	// The 1985 MB performance (Bernstein+NYPhil label in MB, but Discogs MASTER B is
+	// Wiener) has no Discogs agreement → stays medium, no master.
+	for i := range perfs {
+		if perfs[i].FirstYear == 1985 {
+			if perfs[i].Confidence != ConfidenceMedium || perfs[i].DiscogsMaster != 0 {
+				t.Errorf("1985 must stay MB-only/medium; got conf %q master %d", perfs[i].Confidence, perfs[i].DiscogsMaster)
+			}
+		}
+	}
+}
