@@ -451,19 +451,21 @@ func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
 		return nil, nil // a performance is identified by its performers
 	}
 
-	// Candidate masters: composer appears AND ≥1 performer appears, credit anywhere on
-	// the album (release_artist ∪ track_artist). Two EXISTS over indexed artist_id.
+	// Candidate masters: drive from the composer's release_artist credits (indexed by
+	// artist_id) and require ≥1 performer via an indexed EXISTS — release level only.
+	// Constraints are credited at release level; a composer credited only at track level
+	// is a documented miss (the composer is a Work-level fact stored redundantly on
+	// tracks). This avoids a full scan of dc.release joined to dc.master.
 	perfIn, perfArgs := intInClause(performerIDs)
-	args := append([]any{composerID, composerID}, perfArgs...)
-	args = append(args, perfArgs...)
+	args := append([]any{composerID}, perfArgs...)
 	rows, err := m.DB.Query(
 		`SELECT DISTINCT m.id, m.main_release_id, m.year
-		   FROM dc.master m
-		   JOIN dc.release r ON r.master_id = m.id
-		  WHERE ( EXISTS(SELECT 1 FROM dc.release_artist ra WHERE ra.release_id=r.id AND ra.artist_id=?)
-		       OR EXISTS(SELECT 1 FROM dc.track_artist ta JOIN dc.track t ON t.id=ta.track_id WHERE t.release_id=r.id AND ta.artist_id=?) )
-		    AND ( EXISTS(SELECT 1 FROM dc.release_artist ra WHERE ra.release_id=r.id AND ra.artist_id IN (`+perfIn+`))
-		       OR EXISTS(SELECT 1 FROM dc.track_artist ta JOIN dc.track t ON t.id=ta.track_id WHERE t.release_id=r.id AND ta.artist_id IN (`+perfIn+`)) )`,
+		   FROM dc.release_artist rac
+		   JOIN dc.release r ON r.id = rac.release_id
+		   JOIN dc.master m ON m.id = r.master_id
+		  WHERE rac.artist_id = ?
+		    AND EXISTS(SELECT 1 FROM dc.release_artist rap
+		                WHERE rap.release_id = r.id AND rap.artist_id IN (`+perfIn+`))`,
 		args...)
 	if err != nil {
 		return nil, err
