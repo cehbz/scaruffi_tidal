@@ -129,6 +129,39 @@ func TestDiscogsPerformancesNoComposerNoClaim(t *testing.T) {
 	}
 }
 
+func TestReconcileGradesByConstraintCompleteness(t *testing.T) {
+	m := newTestMirror(t)
+	g := beethovenGroup(t, m)
+	q := beethovenPerfQuery()
+	mb, err := m.mbPerformances(g, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dc, err := m.discogsPerformances(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perfs, _, err := m.reconcile(mb, dc, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byYear := map[int]Performance{}
+	for _, p := range perfs {
+		byYear[p.FirstYear] = p
+	}
+	// 1963 MB take reconciles with MASTER A (Beethoven+Bernstein+NYPhil = FULL) → High.
+	a := byYear[1963]
+	if a.Confidence != ConfidenceHigh || a.DiscogsMaster != 70000 {
+		t.Errorf("1963 full-constraint match → High/master 70000; got %q/%d", a.Confidence, a.DiscogsMaster)
+	}
+	// 1985 MB take reconciles with MASTER B (Beethoven+Bernstein, NO orchestra credit =
+	// PARTIAL) → Medium, still dual-identity.
+	b := byYear[1985]
+	if b.Confidence != ConfidenceMedium || b.DiscogsMaster != 70001 {
+		t.Errorf("1985 partial-constraint match → Medium/master 70001; got %q/%d", b.Confidence, b.DiscogsMaster)
+	}
+}
+
 func TestAlbumMatchesWorkDisambiguatesNumber(t *testing.T) {
 	work := significantWorkTokens("Symphony no. 5 in C minor, op. 67")
 	if !albumMatchesWork(work, "Beethoven: Symphony No. 5") {

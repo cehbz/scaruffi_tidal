@@ -451,13 +451,17 @@ func (m *MirrorDB) albumText(releaseID int64) (string, error) {
 }
 
 // reconcile matches each MB performance to at most one Discogs candidate by crossed
-// artist-id overlap (the query forces' Discogs ids) plus year proximity, promoting a
-// match to ConfidenceHigh with dual identity (DiscogsMaster/Label/Catno,
-// Sources=[MusicBrainz,Discogs]). Unmatched MB performances stay ConfidenceMedium.
-// Unused Discogs candidates are appended as Discogs-only ConfidenceLow performances.
+// artist-id overlap (the query's performer-constraint Discogs ids) plus year proximity.
+// A match is graded ConfidenceHigh when ALL performer constraints are corroborated on
+// the reconciled Discogs album (constraintIDs ⊆ dc.ArtistIDs), else ConfidenceMedium
+// (work confirmed, performers partially corroborated — a Discogs credit gap); both carry
+// dual identity (DiscogsMaster/Label/Catno, Sources=[MusicBrainz,Discogs]). Unmatched MB
+// performances stay ConfidenceMedium. Unused Discogs candidates are appended as
+// Discogs-only ConfidenceLow performances.
 func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) ([]Performance, []string, error) {
-	// The query forces' Discogs ids (shared across all MB performances of this query).
-	var forceIDs []int64
+	// The query's performer-constraint Discogs ids (shared across all MB performances of
+	// this query).
+	var constraintIDs []int64
 	var warnings []string
 	for _, w := range performerCredits(q.Credits) {
 		id, viaFallback, ok, err := m.bridgedDiscogsID(w.Name)
@@ -465,7 +469,7 @@ func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) 
 			return nil, nil, err
 		}
 		if ok {
-			forceIDs = append(forceIDs, id)
+			constraintIDs = append(constraintIDs, id)
 			if viaFallback {
 				warnings = append(warnings, "discogs bridge for "+w.Name+" via name-match fallback (unlinked or dangling id)")
 			}
@@ -479,7 +483,7 @@ func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) 
 			if used[j] {
 				continue
 			}
-			if !sharesAnyID(forceIDs, dc[j].ArtistIDs) {
+			if !sharesAnyID(constraintIDs, dc[j].ArtistIDs) {
 				continue
 			}
 			if mb[i].FirstYear != 0 && dc[j].Year != 0 && abs(mb[i].FirstYear-dc[j].Year) > 2 {
@@ -497,7 +501,11 @@ func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) 
 		mb[i].Label = d.Label
 		mb[i].Catno = d.Catno
 		mb[i].Sources = []core.Source{core.SourceMusicBrainz, core.SourceDiscogs}
-		mb[i].Confidence = ConfidenceHigh
+		if subsetInt(constraintIDs, d.ArtistIDs) {
+			mb[i].Confidence = ConfidenceHigh // all performer constraints corroborated
+		} else {
+			mb[i].Confidence = ConfidenceMedium // work confirmed, performers partial (Discogs gap)
+		}
 	}
 
 	// Discogs-only performances (no MB agreement) → surfaced at low confidence.
@@ -531,6 +539,20 @@ func sharesAnyID(a, b []int64) bool {
 		}
 	}
 	return false
+}
+
+// subsetInt reports whether every id in need appears in have.
+func subsetInt(need, have []int64) bool {
+	set := make(map[int64]bool, len(have))
+	for _, x := range have {
+		set[x] = true
+	}
+	for _, x := range need {
+		if !set[x] {
+			return false
+		}
+	}
+	return len(need) > 0
 }
 
 // abs returns the absolute value of x.
