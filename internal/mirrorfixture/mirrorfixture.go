@@ -181,6 +181,54 @@ var mbStmts = []string{
 	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES
 		(1,20,310,311,1),(2,20,310,312,2),(3,20,310,313,3),(4,20,310,314,4),
 		(5,21,310,322,0)`,
+	// --- performances (Task 2): two co-release takes of the Beethoven symphony 5 work-group ---
+	// performance forces (shared by both takes).
+	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (60,'a-bernstein','Leonard Bernstein','',1,299702)`,
+	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (61,'a-nyphil','New York Philharmonic','',5,950)`,
+	`INSERT INTO artist_fts (rowid, name) VALUES (60,'Leonard Bernstein'),(61,'New York Philharmonic'),(50,'Ludwig van Beethoven')`,
+	`INSERT INTO link (id, link_type) VALUES (30,151),(31,150)`, // 151 conductor, 150 orchestra
+	// TAKE A (1963): movement recordings 40..43 on release-group 70 (rel 510, year 1963).
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
+		(40,'r-a-i','Symphony no. 5: I. Allegro con brio',450000,'',1),
+		(41,'r-a-ii','Symphony no. 5: II. Andante con moto',600000,'',1),
+		(42,'r-a-iii','Symphony no. 5: III. Scherzo',300000,'',1),
+		(43,'r-a-iv','Symphony no. 5: IV. Allegro',519000,'',1)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES
+		(10,1,40,311,0),(11,1,41,312,0),(12,1,42,313,0),(13,1,43,314,0)`,
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES
+		(20,30,60,40,0,''),(21,31,61,40,0,''),(22,30,60,41,0,''),(23,31,61,41,0,''),
+		(24,30,60,42,0,''),(25,31,61,42,0,''),(26,30,60,43,0,''),(27,31,61,43,0,'')`,
+	`INSERT INTO isrc (recording, isrc) VALUES (40,'USA196300001'),(41,'USA196300002'),(42,'USA196300003'),(43,'USA196300004')`,
+	`INSERT INTO release_group (id, gid, name, artist_credit, discogs_master_id) VALUES (70,'rg-a','Beethoven: Symphony no. 5',1,70000)`,
+	`INSERT INTO release_group_meta (id, first_release_date_year) VALUES (70,1963)`,
+	`INSERT INTO release (id, gid, name, artist_credit, release_group, status, discogs_release_id) VALUES (510,'rel-a','Beethoven: Symphony no. 5',1,70,1,NULL)`,
+	`INSERT INTO medium (id, release, position, format, track_count) VALUES (710,510,1,2,4)`,
+	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES
+		(820,'t-a-i',40,710,1,'1','I. Allegro con brio',450000),
+		(821,'t-a-ii',41,710,2,'2','II. Andante con moto',600000),
+		(822,'t-a-iii',42,710,3,'3','III. Scherzo',300000),
+		(823,'t-a-iv',43,710,4,'4','IV. Allegro',519000)`,
+	// TAKE B (1985): SAME forces, movement recordings 44..47 on release-group 71 (rel 511, year 1985).
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
+		(44,'r-b-i','Symphony no. 5: I. Allegro con brio',455000,'',1),
+		(45,'r-b-ii','Symphony no. 5: II. Andante con moto',610000,'',1),
+		(46,'r-b-iii','Symphony no. 5: III. Scherzo',305000,'',1),
+		(47,'r-b-iv','Symphony no. 5: IV. Allegro',418000,'',1)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES
+		(14,1,44,311,0),(15,1,45,312,0),(16,1,46,313,0),(17,1,47,314,0)`,
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES
+		(28,30,60,44,0,''),(29,31,61,44,0,''),(30,30,60,45,0,''),(31,31,61,45,0,''),
+		(32,30,60,46,0,''),(33,31,61,46,0,''),(34,30,60,47,0,''),(35,31,61,47,0,'')`,
+	`INSERT INTO isrc (recording, isrc) VALUES (44,'USA198500001'),(45,'USA198500002'),(46,'USA198500003'),(47,'USA198500004')`,
+	`INSERT INTO release_group (id, gid, name, artist_credit, discogs_master_id) VALUES (71,'rg-b','Beethoven: Symphony no. 5',1,70001)`,
+	`INSERT INTO release_group_meta (id, first_release_date_year) VALUES (71,1985)`,
+	`INSERT INTO release (id, gid, name, artist_credit, release_group, status, discogs_release_id) VALUES (511,'rel-b','Beethoven: Symphony no. 5',1,71,1,NULL)`,
+	`INSERT INTO medium (id, release, position, format, track_count) VALUES (711,511,1,2,4)`,
+	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES
+		(830,'t-b-i',44,711,1,'1','I. Allegro con brio',455000),
+		(831,'t-b-ii',45,711,2,'2','II. Andante con moto',610000),
+		(832,'t-b-iii',46,711,3,'3','III. Scherzo',305000),
+		(833,'t-b-iv',47,711,4,'4','IV. Allegro',418000)`,
 }
 
 var dcStmts = []string{
