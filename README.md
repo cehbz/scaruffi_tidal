@@ -51,9 +51,9 @@ The pipeline is a set of verbs over JSON artifacts. Run via the `tidalist` comma
 (after `uv sync`) or `uv run python -m tidalist`.
 
 ```bash
-# 1. Produce an intent from Scaruffi's classical page
-uv run tidalist scaruffi examples/classical.html -o intent.json
-#    (or hand-write / agent-generate intent.json — see the contract below)
+# 1. Produce an intent.json (hand-write or agent-generate — see the contract below).
+#    The old `tidalist scaruffi` auto-parser is retired; the interpret stage
+#    (see INTERPRET.md) now turns a source — page, brief, or list — into role-tagged intent.
 
 # 2. Curate the golden playlist (discovers albums & recordings, applies the brief)
 uv run tidalist curate intent.json -o golden.json
@@ -73,8 +73,8 @@ uv run tidalist run intent.json -o golden.json
 
 ### Intent JSON
 
-The hand-off a front-end (an agent, or `tidalist scaruffi`) produces. Playlists may
-mix whole **albums** and single **tracks**:
+The hand-off a front-end (an agent, or the interpret stage — see INTERPRET.md) produces.
+Playlists may mix whole **albums** and single **tracks**:
 
 ```json
 {
@@ -126,8 +126,7 @@ src/tidalist/
   realize/    Realizer adapters: tidal (composes the Catalog port)
   tidal/      Tidal Catalog adapter + OAuth session
   nl/         the agent intent contract (parse_intent)
-  scaruffi/   Scaruffi classical-page front-end (parse)
-  cli.py      verbs: scaruffi, curate, review, realize, publish, run
+  cli.py      verbs: curate, review, realize, publish, run
   config.py   AppConfig
 ```
 
