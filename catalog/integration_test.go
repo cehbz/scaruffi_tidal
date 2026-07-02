@@ -25,6 +25,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cehbz/tidalist/core"
 )
@@ -460,15 +461,12 @@ func composersContain(cs []string, want string) bool {
 //     classical compounds that came back EMPTY under the retired top-1 resolveWorkID; both now
 //     resolve as multi-movement work-groups.
 //
-// LATENCY / COVERAGE NOTE (measured 2026-07-02): discogsPerformances is index-driven (it drives
-// from the composer's release_artist credits, no full scan), but for a prolific composer it is
-// still minutes-scale: Beethoven+Kleiber+VPO measured ~13 min cold and ~13 min warm on the real
-// mirror (X10 over USB3), iterating the composer's ~100k release_artist rows plus a per-candidate
-// N+1.  So this test keeps the composer OMITTED (or composer-only) to fast-exit discogsPerformances
-// and stay quick.  The composer+performer path was verified separately: it completes and DOES
-// produce cross-source High (the canonical DG 2530 516, master 287096), but at ~13 min it is not
-// viable interactively.  Fixes: the grain-correct performer-driven redesign and the build-time
-// concordance; see TODO and the KB tidalist node.
+// LATENCY / COVERAGE NOTE (updated 2026-07-02): discogsPerformances is performer-driven
+// (conductor ∩ orchestra intersection at release level) and interactive — the full
+// Beethoven+Kleiber+VPO federated resolve measures ~7s on the real mirror and produces
+// cross-source High (the canonical DG 2530 516, master 287096); see
+// TestIntegrationResolvePerformanceDiscogsInteractive.  This test keeps the composer
+// OMITTED (or composer-only) to exercise the MB-narrowed shapes specifically.
 const beethoven5WorkGID = "d03bff61-26fc-301b-98ac-4d8e85771cbc"
 
 func TestIntegrationResolvePerformance(t *testing.T) {
@@ -529,10 +527,10 @@ func TestIntegrationResolvePerformance(t *testing.T) {
 	t.Logf("Beethoven5 Bernstein/NYPhil: outcome=%s perfs=%d first-perf year=%d recs=%d isrcs=%d conf=%s sources=%v work=%q composers=%v",
 		res.Outcome, len(res.Performances), withRecs.FirstYear, len(withRecs.Recordings), isrcs,
 		withRecs.Confidence, withRecs.Sources, withRecs.Work.Name, withRecs.Work.Composers)
-	// Discogs cross-source corroboration is NOT asserted here: the only query shape that triggers
-	// it (composer + performer) is too slow to include in this test (~13 min; see the latency note
-	// above).  On this MB-narrowed path discogsPerformances fast-exits, so the performance is
-	// MB-only / medium by design.
+	// Discogs cross-source corroboration is NOT asserted here: this MB-narrowed shape omits
+	// the composer, so discogsPerformances fast-exits and the performance is MB-only / medium
+	// by design.  The composer+performer federated shape is covered by
+	// TestIntegrationResolvePerformanceDiscogsInteractive (~7s live).
 	if withRecs.Confidence == ConfidenceHigh {
 		t.Logf("NOTE: unexpected High confidence (Discogs corroborated) on the MB-narrowed path: master=%d label=%q",
 			withRecs.DiscogsMaster, withRecs.Label)
@@ -565,4 +563,83 @@ func TestIntegrationResolvePerformance(t *testing.T) {
 		}
 		t.Logf("%s: outcome=%s perfs=%d first-perf recs=%d", c.name, cr.Outcome, len(cr.Performances), recs)
 	}
+}
+
+// TestIntegrationResolvePerformanceDiscogsInteractive is the latency gate for the
+// performer-driven discogsPerformances redesign: a composer+performer query is the shape
+// that drives Discogs cross-source discovery/corroboration, and under the retired
+// composer-driven discogsPerformances that same Kleiber/VPO query measured ~13 min cold
+// on the real mirror (see TestIntegrationResolvePerformance's LATENCY / COVERAGE NOTE
+// above). This test asserts the redesign completes within an interactive 60s budget and
+// still lands on the canonical cross-source High anchor (DG 2530 516 / Discogs master
+// 287096).
+//
+// If this fails on the missing High assertion, do not adjust thresholds or this test —
+// the 2026-07-02 verification produced High on this anchor via the old reconciliation, so
+// a regression here is a real defect. Debug with systematic-debugging first.
+func TestIntegrationResolvePerformanceDiscogsInteractive(t *testing.T) {
+	m := openRealMirror(t)
+	q := PerformanceQuery{
+		Work: "Symphony no. 5 in C minor, op. 67",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Ludwig van Beethoven"},
+			{Role: core.RoleConductor, Name: "Carlos Kleiber"},
+			{Role: core.RoleOrchestra, Name: "Wiener Philharmoniker"},
+		},
+	}
+	start := time.Now()
+	res, err := m.ResolvePerformance(q)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Kleiber/VPO resolve: %s, outcome=%s, %d performances", elapsed, res.Outcome, len(res.Performances))
+	if elapsed > 60*time.Second {
+		t.Fatalf("interactive budget blown: %s > 60s (composer-driven was ~13min)", elapsed)
+	}
+	foundHigh := false
+	for _, p := range res.Performances {
+		if p.Confidence == ConfidenceHigh && p.DiscogsMaster != 0 {
+			foundHigh = true
+		}
+	}
+	if !foundHigh {
+		t.Fatal("want at least one cross-source High performance (the canonical DG 2530 516 / master 287096 anchor)")
+	}
+}
+
+// TestIntegrationResolvePerformanceDiscogsExtreme re-runs the Bernstein/NYPhil worst case
+// (5,216 candidates under the retired composer-driven discogsPerformances) under the same
+// interactive 60s budget. No canonical cross-source High anchor is asserted here — that
+// assertion belongs to the Kleiber/VPO case above — only that the query completes in
+// budget and resolves to a non-empty outcome; the confidence distribution is logged for
+// the record.
+func TestIntegrationResolvePerformanceDiscogsExtreme(t *testing.T) {
+	m := openRealMirror(t)
+	q := PerformanceQuery{
+		Work: "Symphony no. 5",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Ludwig van Beethoven"},
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+	}
+	start := time.Now()
+	res, err := m.ResolvePerformance(q)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Bernstein/NYPhil resolve: %s, outcome=%s, %d performances", elapsed, res.Outcome, len(res.Performances))
+	if elapsed > 60*time.Second {
+		t.Fatalf("interactive budget blown: %s > 60s", elapsed)
+	}
+	if res.Outcome == "" {
+		t.Fatal("want a non-empty outcome")
+	}
+	confCounts := map[Confidence]int{}
+	for _, p := range res.Performances {
+		confCounts[p.Confidence]++
+	}
+	t.Logf("Bernstein/NYPhil confidence counts: %v", confCounts)
 }

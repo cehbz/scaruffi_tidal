@@ -581,7 +581,7 @@ func (m *MirrorDB) performerIntersectionCandidates(armIDs []int64) ([]dcCandidat
 	return out, rows.Err()
 }
 
-// dcTrack is a Discogs release track: its position, title, and the ID used to key
+// dcTrack is a Discogs release track: its title and the ID used to key
 // track-level credits.
 type dcTrack struct {
 	ID    int64
@@ -597,9 +597,11 @@ type dcCredit struct {
 // tracksFor returns the top-level tracks of each release, seq-ordered — one query.
 func (m *MirrorDB) tracksFor(releaseIDs []int64) (map[int64][]dcTrack, error) {
 	in, args := intInClause(releaseIDs)
+	// +parent_track_id: bare IS NULL lures the planner onto NULL-heavy idx_track_parent
+	// (~120M-row walk; no sqlite_stat1 on the mirror); the unary + pins idx_track_release.
 	rows, err := m.DB.Query(
 		`SELECT release_id, id, title FROM dc.track
-		  WHERE release_id IN (`+in+`) AND parent_track_id IS NULL
+		  WHERE release_id IN (`+in+`) AND +parent_track_id IS NULL
 		  ORDER BY release_id, seq`, args...)
 	if err != nil {
 		return nil, err
@@ -724,8 +726,8 @@ func groupComposerConfirmed(group []dcTrack, trackCredits map[int64][]dcCredit, 
 	return false
 }
 
-// dcPerf is a Discogs-side performance candidate: a master whose track/title matches
-// the work and whose release_artist roles satisfy the bridged credit AND.
+// dcPerf is a Discogs-side performance candidate: a master from the performer-id
+// intersection whose reconstructed work-group confirmed the composer.
 type dcPerf struct {
 	MasterID    int64
 	Year        int
