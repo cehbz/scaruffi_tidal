@@ -207,6 +207,53 @@ func TestReconcileGradesByConstraintCompleteness(t *testing.T) {
 	}
 }
 
+func TestReconcileGlobalYearPairing(t *testing.T) {
+	// Two MB clusters: year 0 (unknown) listed FIRST, then 1963. One dc master (1963).
+	// Greedy first-match gave the master to the year-0 cluster; global pairing must
+	// give it to the 1963 cluster.
+	m := newTestMirror(t)
+	mb := []Performance{
+		{FirstYear: 0, Confidence: ConfidenceMedium},
+		{FirstYear: 1963, Confidence: ConfidenceMedium},
+	}
+	dc := []dcPerf{{MasterID: 70000, Year: 1963, ArtistIDs: []int64{299702, 950, 952}}}
+	q := PerformanceQuery{Credits: core.Credits{
+		{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+		{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+	}}
+	got, _, err := m.reconcile(mb, dc, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].DiscogsMaster != 0 {
+		t.Fatalf("year-0 cluster must not steal the 1963 master; got %+v", got[0])
+	}
+	if got[1].DiscogsMaster != core.DiscogsMasterID(70000) {
+		t.Fatalf("1963 cluster must take master 70000; got %+v", got[1])
+	}
+}
+
+func TestReconcileHighRequiresAllBridged(t *testing.T) {
+	// A constraint whose artist has NO Discogs bridge (fixture: 'Wiener Singverein'
+	// resolves to no dc id) caps confidence at Medium even when the reconciled album
+	// carries every BRIDGED constraint.
+	m := newTestMirror(t)
+	mb := []Performance{{FirstYear: 1963, Confidence: ConfidenceMedium}}
+	dc := []dcPerf{{MasterID: 70000, Year: 1963, ArtistIDs: []int64{299702, 950, 952}}}
+	q := PerformanceQuery{Credits: core.Credits{
+		{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+		{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		{Role: core.RoleChorus, Name: "Wiener Singverein"},
+	}}
+	got, _, err := m.reconcile(mb, dc, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Confidence != ConfidenceMedium {
+		t.Fatalf("unbridged constraint must cap at Medium, got %s", got[0].Confidence)
+	}
+}
+
 func TestAlbumMatchesWorkDisambiguatesNumber(t *testing.T) {
 	work := significantWorkTokens("Symphony no. 5 in C minor, op. 67")
 	if !albumMatchesWork(work, "Beethoven: Symphony No. 5") {
@@ -239,7 +286,7 @@ func TestResolvePerformanceCandidatesWhenAmbiguous(t *testing.T) {
 		t.Errorf("1963 take (full-constraint reconciliation) should be high, got %+v", byYear[1963])
 	}
 	if p, ok := byYear[1985]; !ok || p.Confidence != ConfidenceMedium {
-		t.Errorf("1985 take (partial-constraint reconciliation) should be medium, got %+v", byYear[1985])
+		t.Errorf("1985 take (MB-only: master 70001 is Bernstein-only, not an intersection candidate) should be medium, got %+v", byYear[1985])
 	}
 }
 

@@ -845,14 +845,18 @@ func creditedArtistIDs(release []dcCredit, tracks []dcTrack, trackCredits map[in
 	return out
 }
 
-// reconcile matches each MB performance to at most one Discogs candidate by crossed
-// artist-id overlap (the query's performer-constraint Discogs ids) plus year proximity.
-// A match is graded ConfidenceHigh when ALL performer constraints are corroborated on
-// the reconciled Discogs album (constraintIDs ⊆ dc.ArtistIDs), else ConfidenceMedium
-// (work confirmed, performers partially corroborated — a Discogs credit gap); both carry
-// dual identity (DiscogsMaster/Label/Catno, Sources=[MusicBrainz,Discogs]). Unmatched MB
-// performances stay ConfidenceMedium. Unused Discogs candidates are appended as
-// Discogs-only ConfidenceLow performances.
+// reconcile matches each MB performance to at most one Discogs candidate: every (mb, dc)
+// pair sharing a constraint id is scored by year proximity (known-year pairs by
+// |mbYear-dcYear|, hard-capped at ±2; either-year-unknown pairs rank after every
+// known-year pair) and assigned greedily over that globally sorted order, each side at
+// most once — a year-unknown MB cluster can no longer steal a known-year dc master from
+// an exact-match cluster. A match is graded ConfidenceHigh only when EVERY performer
+// constraint bridged to a Discogs id (allBridged) AND all of them are corroborated on the
+// reconciled Discogs album (constraintIDs ⊆ dc.ArtistIDs); else ConfidenceMedium (work
+// confirmed, performers partially corroborated — an unbridged or uncorroborated
+// constraint); both carry dual identity (DiscogsMaster/Label/Catno,
+// Sources=[MusicBrainz,Discogs]). Unmatched MB performances stay ConfidenceMedium. Unused
+// Discogs candidates are appended as Discogs-only ConfidenceLow performances.
 func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) ([]Performance, []string, error) {
 	// The query's performer-constraint Discogs ids (shared across all MB performances of
 	// this query).
@@ -871,35 +875,61 @@ func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) 
 		}
 	}
 
-	used := make([]bool, len(dc))
+	allBridged := len(constraintIDs) == len(performerCredits(q.Credits))
+
+	// Pairing is globally year-proximate, not first-match-wins: score every (mb, dc)
+	// pair that shares a constraint id (known-year pairs by |mbYear-dcYear|, hard-capped
+	// at ±2; either-unknown pairs rank after every known-year pair), sort ascending, and
+	// assign greedily over that order — each side at most once. This prevents a year-0 MB
+	// cluster from stealing a known-year dc master that rightfully belongs to an
+	// exact-match cluster considered later in mb's original order.
+	type pair struct{ i, j, score int }
+	var pairs []pair
 	for i := range mb {
-		best := -1
 		for j := range dc {
-			if used[j] {
-				continue
-			}
 			if !sharesAnyID(constraintIDs, dc[j].ArtistIDs) {
 				continue
 			}
-			if mb[i].FirstYear != 0 && dc[j].Year != 0 && abs(mb[i].FirstYear-dc[j].Year) > 2 {
-				continue
+			score := 1000 // either year unknown: after every known-year pair
+			if mb[i].FirstYear != 0 && dc[j].Year != 0 {
+				d := abs(mb[i].FirstYear - dc[j].Year)
+				if d > 2 {
+					continue
+				}
+				score = d
 			}
-			best = j
-			break
+			pairs = append(pairs, pair{i, j, score})
 		}
-		if best < 0 {
+	}
+	sort.Slice(pairs, func(a, b int) bool {
+		if pairs[a].score != pairs[b].score {
+			return pairs[a].score < pairs[b].score
+		}
+		if pairs[a].i != pairs[b].i {
+			return pairs[a].i < pairs[b].i
+		}
+		return pairs[a].j < pairs[b].j
+	})
+	usedMB := make([]bool, len(mb))
+	used := make([]bool, len(dc))
+	for _, p := range pairs {
+		if usedMB[p.i] || used[p.j] {
 			continue
 		}
-		d := dc[best]
-		used[best] = true
-		mb[i].DiscogsMaster = core.DiscogsMasterID(d.MasterID)
-		mb[i].Label = d.Label
-		mb[i].Catno = d.Catno
-		mb[i].Sources = []core.Source{core.SourceMusicBrainz, core.SourceDiscogs}
-		if subsetInt(constraintIDs, d.ArtistIDs) {
-			mb[i].Confidence = ConfidenceHigh // all performer constraints corroborated
+		usedMB[p.i], used[p.j] = true, true
+		d := dc[p.j]
+		mb[p.i].DiscogsMaster = core.DiscogsMasterID(d.MasterID)
+		mb[p.i].Label = d.Label
+		mb[p.i].Catno = d.Catno
+		mb[p.i].Sources = []core.Source{core.SourceMusicBrainz, core.SourceDiscogs}
+		// High requires every performer constraint to be bridged to a Discogs id (not just
+		// every bridged id corroborated): a constraint that can't even be checked is not
+		// evidence of agreement. subsetInt holds by construction under intersection
+		// candidates once allBridged; it stays as an explicit guard.
+		if allBridged && subsetInt(constraintIDs, d.ArtistIDs) {
+			mb[p.i].Confidence = ConfidenceHigh // all performer constraints corroborated
 		} else {
-			mb[i].Confidence = ConfidenceMedium // work confirmed, performers partial (Discogs gap)
+			mb[p.i].Confidence = ConfidenceMedium // work confirmed, performers partial (Discogs gap)
 		}
 	}
 
