@@ -525,6 +525,62 @@ func albumMatchesWork(work map[string]bool, albumText string) bool {
 	return !workHasDigit || sharedDigit
 }
 
+// dcCandidate is a (master, credited release) pair from the performer intersection.
+type dcCandidate struct {
+	MasterID      int64
+	ReleaseID     int64 // the credited release (work-group evidence is read here)
+	MainReleaseID int64 // label/edition attributes come from the main release
+	Year          int
+}
+
+// performerIntersectionCandidates finds (master, credited release) pairs whose
+// release-level credits contain EVERY arm id — the performers are the album's
+// identity, and each arm is an indexed release_artist scan (typical: 10^2–10^3 rows
+// per arm, intersection in seconds; measured 274 for Kleiber ∩ VPO). Masterless
+// releases are not returned (the primitive's unit is the master).
+func (m *MirrorDB) performerIntersectionCandidates(armIDs []int64) ([]dcCandidate, error) {
+	if len(armIDs) == 0 {
+		return nil, nil
+	}
+	var b strings.Builder
+	args := make([]any, len(armIDs))
+	for i, id := range armIDs {
+		if i > 0 {
+			b.WriteString(" INTERSECT ")
+		}
+		b.WriteString("SELECT release_id FROM dc.release_artist WHERE artist_id = ?")
+		args[i] = id
+	}
+	rows, err := m.DB.Query(
+		`SELECT r.master_id, r.id, m.main_release_id, m.year
+		   FROM (`+b.String()+`) c
+		   JOIN dc.release r ON r.id = c.release_id
+		   JOIN dc.master m ON m.id = r.master_id
+		  ORDER BY r.master_id, (r.id = m.main_release_id) DESC, r.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []dcCandidate
+	seen := map[int64]bool{}
+	for rows.Next() {
+		var c dcCandidate
+		var year sql.NullInt64
+		if err := rows.Scan(&c.MasterID, &c.ReleaseID, &c.MainReleaseID, &year); err != nil {
+			return nil, err
+		}
+		if seen[c.MasterID] {
+			continue
+		}
+		seen[c.MasterID] = true
+		if year.Valid {
+			c.Year = int(year.Int64)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // dcTrack is a Discogs release track: its position, title, and the ID used to key
 // track-level credits.
 type dcTrack struct {

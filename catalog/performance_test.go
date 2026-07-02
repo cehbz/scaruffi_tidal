@@ -518,6 +518,29 @@ func TestGroupComposerConfirmedCombinedRole(t *testing.T) {
 	}
 }
 
+func TestPerformerIntersectionCandidates(t *testing.T) {
+	m := newTestMirror(t)
+	// Bernstein(299702) ∩ NYPhil(950): releases 60000 (Beethoven 5) and 60002 (Mahler
+	// decoy) are credited with both; 60001 is Bernstein-only and must be absent.
+	got, err := m.performerIntersectionCandidates([]int64{299702, 950})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byMaster := map[int64]dcCandidate{}
+	for _, c := range got {
+		byMaster[c.MasterID] = c
+	}
+	if _, ok := byMaster[70001]; ok {
+		t.Fatal("master 70001 is Bernstein-only; the intersection must exclude it")
+	}
+	if c, ok := byMaster[70000]; !ok || c.ReleaseID != 60000 || c.Year != 1963 {
+		t.Fatalf("master 70000: want credited release 60000 year 1963, got %+v", c)
+	}
+	if _, ok := byMaster[70002]; !ok {
+		t.Fatal("master 70002 (Mahler decoy) satisfies the performer intersection; work-group confirmation rejects it later, not here")
+	}
+}
+
 func TestTracksForBatch(t *testing.T) {
 	m := newTestMirror(t)
 	got, err := m.tracksFor([]int64{583800, 382820})
