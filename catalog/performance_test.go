@@ -252,3 +252,197 @@ func TestResolvePerformanceYearMissWarnsNotSubstitutes(t *testing.T) {
 		t.Error("a year selector that matches nothing must warn")
 	}
 }
+
+func TestResolvePerformanceMBOnlySkipsDiscogs(t *testing.T) {
+	m := newTestMirror(t)
+
+	// Without MBOnly the fixture reconciles: at least one performance touches Discogs
+	// (a Sources entry or a Discogs-only Low candidate) — proves the flag isn't vacuous.
+	full, err := m.ResolvePerformance(beethovenPerfQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var touchesDiscogs bool
+	for _, p := range full.Performances {
+		for _, s := range p.Sources {
+			if s == core.SourceDiscogs {
+				touchesDiscogs = true
+			}
+		}
+	}
+	if !touchesDiscogs {
+		t.Fatal("fixture must produce a Discogs-touched performance without MBOnly")
+	}
+
+	q := beethovenPerfQuery()
+	q.MBOnly = true
+	res, err := m.ResolvePerformance(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Performances) == 0 {
+		t.Fatal("MBOnly resolution must still surface the MB performances")
+	}
+	for i, p := range res.Performances {
+		for _, s := range p.Sources {
+			if s == core.SourceDiscogs {
+				t.Errorf("perf[%d]: MBOnly must not touch Discogs; sources=%v", i, p.Sources)
+			}
+		}
+		if p.DiscogsMaster != 0 {
+			t.Errorf("perf[%d]: MBOnly must not carry a Discogs master; got %d", i, p.DiscogsMaster)
+		}
+		if p.Confidence == ConfidenceHigh {
+			t.Errorf("perf[%d]: MBOnly cannot grade High (no cross-source agreement)", i)
+		}
+	}
+}
+
+func TestMBPerformancesExportReleaseGroupIdentity(t *testing.T) {
+	m := newTestMirror(t)
+	g := beethovenGroup(t, m)
+	perfs, err := m.mbPerformances(g, PerformanceQuery{
+		Credits: core.Credits{
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byYear := map[int]Performance{}
+	for _, p := range perfs {
+		byYear[p.FirstYear] = p
+	}
+	a, ok := byYear[1963]
+	if !ok {
+		t.Fatalf("missing the 1963 performance; years=%v", perfsYears(perfs))
+	}
+	if a.RGMBID != "rg-a" {
+		t.Errorf("1963 RGMBID = %q, want rg-a", a.RGMBID)
+	}
+	if a.RGTitle != "Beethoven: Symphony no. 5" {
+		t.Errorf("1963 RGTitle = %q", a.RGTitle)
+	}
+	if a.RGArtistCredit == "" {
+		t.Error("1963 RGArtistCredit must be populated")
+	}
+	b, ok := byYear[1985]
+	if !ok {
+		t.Fatalf("missing the 1985 performance")
+	}
+	if b.RGMBID != "rg-b" {
+		t.Errorf("1985 RGMBID = %q, want rg-b", b.RGMBID)
+	}
+}
+
+// TestResolvePerformanceFallsBackToPerformerWorkGroup exercises the title-twin
+// work-family trap (the live Goldberg case): the English-named family matched by
+// title FTS holds only other performers' recordings, while the performer's actual
+// recordings hang off a German-named twin family the English phrase can never
+// match. Resolution must fall back to performer-driven work-group discovery.
+func TestResolvePerformanceFallsBackToPerformerWorkGroup(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.ResolvePerformance(PerformanceQuery{
+		Work: "Goldberg Variations",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Johann Sebastian Bach"},
+			{Role: core.RoleSoloist, Name: "Glenn Gould"},
+		},
+		MBOnly: true,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome == OutcomeAbsent || len(res.Performances) == 0 {
+		t.Fatalf("performer fallback must resolve the twin family; outcome=%q perfs=%d warnings=%v",
+			res.Outcome, len(res.Performances), res.Warnings)
+	}
+	p := res.Performances[0]
+	if p.Work.MBID != "w-gv-de" {
+		t.Errorf("resolved work-group = %q, want the German twin w-gv-de", p.Work.MBID)
+	}
+	if len(p.Recordings) != 2 {
+		t.Errorf("want Gould's 2 variation recordings, got %d", len(p.Recordings))
+	}
+	if p.FirstYear != 1955 {
+		t.Errorf("first year = %d, want 1955", p.FirstYear)
+	}
+	if !p.Credits.MatchesRole(core.RoleSoloist, "Glenn Gould") {
+		t.Errorf("matched credits %v missing the Gould soloist credit", p.Credits)
+	}
+}
+
+// TestCreditsSatisfyEnsembleUmbrella: an intent-side orchestra/soloist constraint
+// must match MB's actual credit typing for the same name — a vocal ensemble is
+// credited chorus (or only as the credited artist), a soloist may carry only the
+// artist credit. Identity stays name-exact; only the role is umbrella'd.
+func TestCreditsSatisfyEnsembleUmbrella(t *testing.T) {
+	cases := []struct {
+		name string
+		have core.Credits
+		want core.Credits
+		ok   bool
+	}{
+		{"orchestra matches chorus credit",
+			core.Credits{{Role: core.RoleChorus, Name: "The Tallis Scholars"}},
+			core.Credits{{Role: core.RoleOrchestra, Name: "The Tallis Scholars"}}, true},
+		{"orchestra matches bare artist credit",
+			core.Credits{{Role: core.RoleArtist, Name: "The Tallis Scholars"}},
+			core.Credits{{Role: core.RoleOrchestra, Name: "The Tallis Scholars"}}, true},
+		{"soloist matches bare artist credit",
+			core.Credits{{Role: core.RoleArtist, Name: "Glenn Gould"}},
+			core.Credits{{Role: core.RoleSoloist, Name: "Glenn Gould"}}, true},
+		{"chorus matches bare artist credit",
+			core.Credits{{Role: core.RoleArtist, Name: "Monteverdi Choir"}},
+			core.Credits{{Role: core.RoleChorus, Name: "Monteverdi Choir"}}, true},
+		{"orchestra does NOT match a different name",
+			core.Credits{{Role: core.RoleChorus, Name: "Some Other Choir"}},
+			core.Credits{{Role: core.RoleOrchestra, Name: "The Tallis Scholars"}}, false},
+		{"conductor still umbrellas chorus_master",
+			core.Credits{{Role: core.RoleChorusMaster, Name: "Peter Phillips"}},
+			core.Credits{{Role: core.RoleConductor, Name: "Peter Phillips"}}, true},
+		{"conductor does NOT match bare artist credit",
+			core.Credits{{Role: core.RoleArtist, Name: "Herbert von Karajan"}},
+			core.Credits{{Role: core.RoleConductor, Name: "Herbert von Karajan"}}, false},
+	}
+	for _, c := range cases {
+		if got := creditsSatisfy(c.have, wantsOf(c.want)); got != c.ok {
+			t.Errorf("%s: creditsSatisfy = %v, want %v", c.name, got, c.ok)
+		}
+	}
+}
+
+// TestResolvePerformanceAliasNamedArtists: MB stores Russian artists under
+// Cyrillic primary names with Latin forms in artist_alias. A query using the
+// Latin names (composer, conductor, orchestra) must still resolve: artist
+// resolution falls back to the alias table, and credit matching accepts any
+// alias of the requested name.
+func TestResolvePerformanceAliasNamedArtists(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.ResolvePerformance(PerformanceQuery{
+		Work: "Le Sacre du printemps",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Igor Stravinsky"},
+			{Role: core.RoleConductor, Name: "Valery Gergiev"},
+			{Role: core.RoleOrchestra, Name: "Kirov Orchestra"},
+		},
+		MBOnly: true,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome == OutcomeAbsent || len(res.Performances) == 0 {
+		t.Fatalf("alias-named query must resolve; outcome=%q warnings=%v", res.Outcome, res.Warnings)
+	}
+	p := res.Performances[0]
+	if p.RGMBID != "rg-sacre-gergiev" {
+		t.Errorf("rg = %q, want rg-sacre-gergiev", p.RGMBID)
+	}
+	if p.FirstYear != 1999 {
+		t.Errorf("first year = %d, want 1999", p.FirstYear)
+	}
+}

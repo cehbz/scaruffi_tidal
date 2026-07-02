@@ -81,7 +81,16 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		return WorkGroup{}, false, err
 	}
 
-	// (b) keep candidates whose composer matches (skip the filter when none requested).
+	// (b) keep candidates whose composer matches (skip the filter when none
+	// requested). The requested name is expanded to its alias set, so a Latin
+	// query matches a Cyrillic-named composer.
+	var composerNames []string
+	if composer != "" {
+		var err error
+		if composerNames, err = m.nameVariants(composer); err != nil {
+			return WorkGroup{}, false, err
+		}
+	}
 	var matched []int64
 	for _, id := range candIDs {
 		if composer == "" {
@@ -92,11 +101,7 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		if err != nil {
 			return WorkGroup{}, false, err
 		}
-		cs := make(core.Credits, 0, len(names))
-		for _, n := range names {
-			cs = append(cs, core.Credit{Role: core.RoleComposer, Name: n})
-		}
-		if cs.MatchesRole(core.RoleComposer, composer) {
+		if composerAmong(names, composerNames) {
 			matched = append(matched, id)
 		}
 	}
@@ -135,27 +140,48 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		}
 	}
 
-	// (d) the group = root ∪ its 281 children.
+	return m.groupByRoot(root)
+}
+
+// workGroupMaxDepth caps the 281 descent/ascent: MB movement hierarchies are
+// recursive (work → part → movement), rarely deeper than three levels.
+const workGroupMaxDepth = 4
+
+// groupByRoot assembles a WorkGroup (root ∪ its TRANSITIVE 281 descendants —
+// parts have movements, so one level misses the recordings) from a root work id.
+func (m *MirrorDB) groupByRoot(root int64) (WorkGroup, bool, error) {
 	ids := []int64{root}
-	childRows, err := m.DB.Query(
-		`SELECT lww.entity1 FROM l_work_work lww
-		   JOIN link l ON l.id = lww.link
-		  WHERE lww.entity0 = ? AND l.link_type = ?
-		  ORDER BY lww.link_order, lww.entity1`, root, workGroupLinkParts)
-	if err != nil {
-		return WorkGroup{}, false, err
-	}
-	for childRows.Next() {
-		var id int64
-		if err := childRows.Scan(&id); err != nil {
-			childRows.Close()
+	seen := map[int64]bool{root: true}
+	frontier := []int64{root}
+	for depth := 0; depth < workGroupMaxDepth && len(frontier) > 0; depth++ {
+		inClause, args := intInClause(frontier)
+		childRows, err := m.DB.Query(
+			`SELECT lww.entity1 FROM l_work_work lww
+			   JOIN link l ON l.id = lww.link
+			  WHERE lww.entity0 IN (`+inClause+`) AND l.link_type = ?
+			  ORDER BY lww.link_order, lww.entity1`,
+			append(args, workGroupLinkParts)...)
+		if err != nil {
 			return WorkGroup{}, false, err
 		}
-		ids = append(ids, id)
-	}
-	childRows.Close()
-	if err := childRows.Err(); err != nil {
-		return WorkGroup{}, false, err
+		var next []int64
+		for childRows.Next() {
+			var id int64
+			if err := childRows.Scan(&id); err != nil {
+				childRows.Close()
+				return WorkGroup{}, false, err
+			}
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+				next = append(next, id)
+			}
+		}
+		childRows.Close()
+		if err := childRows.Err(); err != nil {
+			return WorkGroup{}, false, err
+		}
+		frontier = next
 	}
 
 	var g WorkGroup
@@ -165,10 +191,126 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		Scan((*string)(&g.RootMBID), &g.RootName); err != nil {
 		return WorkGroup{}, false, err
 	}
-	if g.Composers, err = m.workComposers(root); err != nil {
+	composers, err := m.workComposers(root)
+	if err != nil {
 		return WorkGroup{}, false, err
 	}
+	g.Composers = composers
 	return g, true, nil
+}
+
+// workGroupFromPerformers rediscovers the work-group from a constraint performer's
+// recordings: their 278-linked works, climbed to 281 parents, filtered by composer
+// and work-title tokens, best-first by recording-link mass. This is the escape from
+// the title-twin family trap (MB holds unmerged same-composition families under
+// different-language names; title FTS can only ever see the queried language's
+// family, which may hold none of the performer's recordings).
+func (m *MirrorDB) workGroupFromPerformers(q PerformanceQuery, composer string) (WorkGroup, bool, error) {
+	workTokens := significantWorkTokens(q.Work)
+	var composerVariants []string
+	if composer != "" {
+		var err error
+		if composerVariants, err = m.nameVariants(composer); err != nil {
+			return WorkGroup{}, false, err
+		}
+	}
+	for _, w := range performerCredits(q.Credits) {
+		aid, ok, err := m.resolveArtistID(w.Name)
+		if err != nil {
+			return WorkGroup{}, false, err
+		}
+		if !ok {
+			continue
+		}
+		// Candidate roots: the performer's recordings → works (278) → 281 parent
+		// (or the work itself when parentless), heaviest recording mass first.
+		rows, err := m.DB.Query(
+			`WITH precs AS (
+			   SELECT rec.id FROM recording rec
+			     JOIN artist_credit_name acn ON acn.artist_credit = rec.artist_credit
+			    WHERE acn.artist = ?1
+			   UNION
+			   SELECT lar.entity1 FROM l_artist_recording lar WHERE lar.entity0 = ?1
+			 )
+			 SELECT COALESCE(pw.parent, lrw.entity1) AS root, COUNT(*) AS n
+			   FROM precs
+			   JOIN l_recording_work lrw ON lrw.entity0 = precs.id
+			   JOIN link l ON l.id = lrw.link AND l.link_type = ?2
+			   LEFT JOIN (SELECT lww.entity1 AS child, lww.entity0 AS parent
+			                FROM l_work_work lww
+			                JOIN link lk ON lk.id = lww.link AND lk.link_type = ?3) pw ON pw.child = lrw.entity1
+			  GROUP BY root ORDER BY n DESC LIMIT 50`, aid, linkTypePerformance, workGroupLinkParts)
+		if err != nil {
+			return WorkGroup{}, false, err
+		}
+		var roots []int64
+		for rows.Next() {
+			var root, n int64
+			if err := rows.Scan(&root, &n); err != nil {
+				rows.Close()
+				return WorkGroup{}, false, err
+			}
+			roots = append(roots, root)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return WorkGroup{}, false, err
+		}
+		for _, root := range roots {
+			// Climb transitively to the TOP ancestor (part → work): the one-level
+			// COALESCE in the query only reaches a movement's immediate parent.
+			for depth := 0; depth < workGroupMaxDepth; depth++ {
+				var parent int64
+				err := m.DB.QueryRow(
+					`SELECT lww.entity0 FROM l_work_work lww
+					   JOIN link l ON l.id = lww.link
+					  WHERE lww.entity1 = ? AND l.link_type = ?
+					  ORDER BY lww.entity0 LIMIT 1`, root, workGroupLinkParts).Scan(&parent)
+				if err == sql.ErrNoRows {
+					break
+				}
+				if err != nil {
+					return WorkGroup{}, false, err
+				}
+				root = parent
+			}
+			var name string
+			if err := m.DB.QueryRow(`SELECT name FROM work WHERE id = ?`, root).Scan(&name); err == sql.ErrNoRows {
+				continue
+			} else if err != nil {
+				return WorkGroup{}, false, err
+			}
+			if !albumMatchesWork(workTokens, name) {
+				continue
+			}
+			if composer != "" {
+				names, err := m.workComposers(root)
+				if err != nil {
+					return WorkGroup{}, false, err
+				}
+				if !composerAmong(names, composerVariants) {
+					continue
+				}
+			}
+			return m.groupByRoot(root)
+		}
+	}
+	return WorkGroup{}, false, nil
+}
+
+// composerAmong reports whether any credited composer name matches any requested
+// variant (normalized comparison via core.Credits.MatchesRole).
+func composerAmong(credited, variants []string) bool {
+	cs := make(core.Credits, 0, len(credited))
+	for _, n := range credited {
+		cs = append(cs, core.Credit{Role: core.RoleComposer, Name: n})
+	}
+	for _, v := range variants {
+		if cs.MatchesRole(core.RoleComposer, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // workComposers returns the work's composer names (l_artist_work, link_type 168).

@@ -239,3 +239,33 @@ func TestFindRecordingByWorkWarnsWhenTruncated(t *testing.T) {
 		t.Error("unfiltered --work truncated by limit must emit a warning")
 	}
 }
+
+func TestRecordingByGID(t *testing.T) {
+	m := newTestMirror(t)
+	info, ok, err := m.RecordingByGID("r-glad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("r-glad must resolve")
+	}
+	if info.MBID != "r-glad" || info.Title != "Glad" {
+		t.Errorf("identity = %q %q", info.MBID, info.Title)
+	}
+	if info.ArtistCredit != "Traffic" {
+		t.Errorf("artist credit = %q, want Traffic", info.ArtistCredit)
+	}
+	if info.Album != "John Barleycorn Must Die" {
+		t.Errorf("album = %q", info.Album)
+	}
+	if info.Year != 1970 {
+		t.Errorf("year = %d, want 1970", info.Year)
+	}
+	if info.DurationS != 419 {
+		t.Errorf("duration = %d, want 419", info.DurationS)
+	}
+
+	if _, ok, err := m.RecordingByGID("r-nope"); err != nil || ok {
+		t.Errorf("unknown gid: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}

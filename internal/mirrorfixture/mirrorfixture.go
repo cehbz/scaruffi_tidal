@@ -17,7 +17,9 @@ import (
 func Build(dir string) (mbPath, dcPath string, err error) {
 	mbPath = filepath.Join(dir, "mb.db")
 	dcPath = filepath.Join(dir, "dc.db")
-	if err = exec(mbPath, mbStmts); err != nil {
+	all := append(append([]string{}, mbStmts...), mbTwinFamilyStmts...)
+	all = append(all, mbAliasStmts...)
+	if err = exec(mbPath, all); err != nil {
 		return "", "", err
 	}
 	if err = exec(dcPath, dcStmts); err != nil {
@@ -229,6 +231,106 @@ var mbStmts = []string{
 		(831,'t-b-ii',45,711,2,'2','II. Andante con moto',610000),
 		(832,'t-b-iii',46,711,3,'3','III. Scherzo',305000),
 		(833,'t-b-iv',47,711,4,'4','IV. Allegro',418000)`,
+}
+
+var mbTwinFamilyStmts = []string{
+	// --- title-twin work families (the Goldberg case): an English-named family whose
+	// recordings are arrangements by OTHER performers, and a German-named family
+	// ("Variationen" — never matched by the English FTS phrase) carrying the queried
+	// performer's recordings. Work-group resolution by title lands on the English
+	// family; the performer-driven fallback must find the German one.
+	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES
+		(62,'a-gould','Glenn Gould','',1,0),
+		(63,'a-trio','Decoy String Trio','',5,0),
+		(64,'a-bach','Johann Sebastian Bach','',1,0)`,
+	`INSERT INTO artist_fts (rowid, name) VALUES (62,'Glenn Gould'),(63,'Decoy String Trio'),(64,'Johann Sebastian Bach')`,
+	`INSERT INTO artist_credit_name (artist_credit, artist) VALUES (62,62),(63,63)`,
+	// English family: parent 330 + child 331 (composer Bach on both).
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(330,'w-gv-en','Goldberg Variations',1,''),
+		(331,'w-gv-en-v1','Goldberg Variations: Variation 1',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES (330,'Goldberg Variations'),(331,'Goldberg Variations: Variation 1')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES
+		(30,2,64,330,0),(31,2,64,331,0)`,
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES (10,20,330,331,1)`,
+	// The English child's only recording is by the decoy trio.
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
+		(60,'r-gv-trio','Goldberg Variations: Variation 1 (string trio)',120000,'',63)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (30,1,60,331,0)`,
+	// German family: parent 340 + children 341/342 (composer Bach), Gould's recordings.
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(340,'w-gv-de','Goldberg-Variationen, BWV 988',1,''),
+		(341,'w-gv-de-v1','Goldberg-Variationen, BWV 988: Variatio 1',1,''),
+		(342,'w-gv-de-v2','Goldberg-Variationen, BWV 988: Variatio 2',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES
+		(340,'Goldberg-Variationen, BWV 988'),
+		(341,'Goldberg-Variationen, BWV 988: Variatio 1'),
+		(342,'Goldberg-Variationen, BWV 988: Variatio 2')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (32,2,64,340,0)`,
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES
+		(11,20,340,341,1),(12,20,340,342,2)`,
+	// Gould's two variation recordings (artist_credit 62 + instrument arc link 12=148).
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
+		(61,'r-gv-g1','Goldberg-Variationen: Variatio 1',115000,'',62),
+		(62,'r-gv-g2','Goldberg-Variationen: Variatio 2',95000,'',62)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES
+		(31,1,61,341,0),(32,1,62,342,0)`,
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES
+		(40,12,62,61,0,''),(41,12,62,62,0,'')`,
+	`INSERT INTO isrc (recording, isrc) VALUES (61,'USG195500001'),(62,'USG195500002')`,
+	// Both recordings first-co-release on release-group 72 (1955).
+	`INSERT INTO release_group (id, gid, name, artist_credit, discogs_master_id) VALUES (72,'rg-gould-55','Goldberg Variations',62,0)`,
+	`INSERT INTO release_group_meta (id, first_release_date_year) VALUES (72,1955)`,
+	`INSERT INTO release (id, gid, name, artist_credit, release_group, status, discogs_release_id) VALUES (512,'rel-gould-55','Goldberg Variations',62,72,1,NULL)`,
+	`INSERT INTO medium (id, release, position, format, track_count) VALUES (712,512,1,2,2)`,
+	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES
+		(840,'t-gv-1',61,712,1,'1','Variatio 1',115000),
+		(841,'t-gv-2',62,712,2,'2','Variatio 2',95000)`,
+}
+
+var mbAliasStmts = []string{
+	// --- Cyrillic-primary artists (the Gergiev/Stravinsky case): MB stores native-
+	// script primary names with Latin forms in artist_alias. Name matching must
+	// consult aliases or every Russian composer/performer zero-misses.
+	`CREATE TABLE artist_alias (id INTEGER PRIMARY KEY, artist INTEGER, name TEXT, locale TEXT, type INTEGER)`,
+	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES
+		(65,'a-stravinsky','Игорь Фёдорович Стравинский','',1,0),
+		(66,'a-gergiev','Валерий Гергиев','',1,0),
+		(67,'a-kirov','Оркестр Мариинского театра','',5,0)`,
+	`INSERT INTO artist_fts (rowid, name) VALUES
+		(65,'Игорь Фёдорович Стравинский'),(66,'Валерий Гергиев'),(67,'Оркестр Мариинского театра')`,
+	`INSERT INTO artist_alias (id, artist, name, locale, type) VALUES
+		(1,65,'Igor Stravinsky','en',1),
+		(2,66,'Valery Gergiev','en',1),
+		(3,67,'Kirov Orchestra','en',1),
+		(4,67,'Mariinsky Theatre Orchestra','en',1)`,
+	`INSERT INTO artist_credit_name (artist_credit, artist) VALUES (66,66)`,
+	// The Sacre work, composed by the Cyrillic-named Stravinsky. THREE-level
+	// hierarchy (root -> part -> movement): MB movement structures are recursive,
+	// and the recordings hang off the deepest level.
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(350,'w-sacre','Le Sacre du printemps',1,''),
+		(351,'w-sacre-p1','Le Sacre du printemps: I. L''Adoration de la terre',1,''),
+		(352,'w-sacre-p1-m1','Le Sacre du printemps: I. L''Adoration de la terre: I. Introduction',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES
+		(350,'Le Sacre du printemps'),
+		(351,'Le Sacre du printemps: I. L''Adoration de la terre'),
+		(352,'Le Sacre du printemps: I. L''Adoration de la terre: I. Introduction')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (40,2,65,350,0)`,
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES
+		(13,20,350,351,1),(14,20,351,352,1)`,
+	// One Gergiev/Kirov recording of the MOVEMENT (grandchild) work.
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
+		(63,'r-sacre-gergiev','Le Sacre du printemps',2040000,'',66)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (33,1,63,352,0)`,
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES
+		(42,30,66,63,0,''),(43,31,67,63,0,'')`,
+	`INSERT INTO release_group (id, gid, name, artist_credit, discogs_master_id) VALUES (73,'rg-sacre-gergiev','Stravinsky: Le Sacre du printemps',66,0)`,
+	`INSERT INTO release_group_meta (id, first_release_date_year) VALUES (73,1999)`,
+	`INSERT INTO release (id, gid, name, artist_credit, release_group, status, discogs_release_id) VALUES (513,'rel-sacre-gergiev','Stravinsky: Le Sacre du printemps',66,73,1,NULL)`,
+	`INSERT INTO medium (id, release, position, format, track_count) VALUES (713,513,1,2,1)`,
+	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES
+		(850,'t-sacre',63,713,1,'1','Le Sacre du printemps',2040000)`,
 }
 
 var dcStmts = []string{

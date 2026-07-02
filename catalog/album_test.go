@@ -182,3 +182,47 @@ func TestFindAlbumTitleOnly(t *testing.T) {
 		t.Errorf("Discogs candidate artist_confirmed should be unset (nil); got %v", *dc.Match.ArtistConfirmed)
 	}
 }
+
+func TestAlbumByRG(t *testing.T) {
+	m := newTestMirror(t)
+	info, ok, err := m.AlbumByRG("rg-jbmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("rg-jbmd must resolve")
+	}
+	if info.MBID != "rg-jbmd" || info.Title != "John Barleycorn Must Die" {
+		t.Errorf("identity = %q %q", info.MBID, info.Title)
+	}
+	if info.Year != 1970 {
+		t.Errorf("year = %d, want 1970", info.Year)
+	}
+	if info.DiscogsMasterID != 69017 {
+		t.Errorf("discogs master = %d, want 69017", info.DiscogsMasterID)
+	}
+	if !info.ArtistCredits.MatchesRole(core.RoleArtist, "Traffic") {
+		t.Errorf("artist credits %v missing Traffic", info.ArtistCredits)
+	}
+	if len(info.Traits) != 0 {
+		t.Errorf("JBMD should carry no traits, got %v", info.Traits)
+	}
+
+	comp, ok, err := m.AlbumByRG("rg-best")
+	if err != nil || !ok {
+		t.Fatalf("rg-best must resolve: ok=%v err=%v", ok, err)
+	}
+	var hasComp bool
+	for _, tr := range comp.Traits {
+		if tr == core.TraitCompilation {
+			hasComp = true
+		}
+	}
+	if !hasComp {
+		t.Errorf("rg-best traits %v missing compilation", comp.Traits)
+	}
+
+	if _, ok, err := m.AlbumByRG("rg-nope"); err != nil || ok {
+		t.Errorf("unknown rg: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}

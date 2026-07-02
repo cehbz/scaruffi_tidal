@@ -272,3 +272,63 @@ func performerCredits(cs core.Credits) core.Credits {
 	}
 	return out
 }
+
+// RecordingInfo is a recording's identity for GM materialization: what a track
+// entry needs to be self-contained (identity, credit, vintage, credits).
+type RecordingInfo struct {
+	MBID         core.MBID
+	Title        string
+	ArtistCredit string
+	ISRC         core.ISRC
+	DurationS    int
+	Album        string
+	Year         int
+	Credits      core.Credits
+}
+
+// RecordingByGID returns a recording's identity by gid. ok=false when unknown.
+// Album/Year come from the recording's earliest release-group (the original
+// release, never a reissue's).
+func (m *MirrorDB) RecordingByGID(gid string) (RecordingInfo, bool, error) {
+	var id int64
+	var name string
+	var length sql.NullInt64
+	var credit, isrcs sql.NullString
+	err := m.DB.QueryRow(
+		`SELECT r.id, r.name, r.length,
+		        (SELECT GROUP_CONCAT(a.name, ', ')
+		           FROM artist_credit_name acn JOIN artist a ON a.id = acn.artist
+		          WHERE acn.artist_credit = r.artist_credit),
+		        (SELECT GROUP_CONCAT(i.isrc, ', ') FROM isrc i WHERE i.recording = r.id)
+		   FROM recording r WHERE r.gid = ?`, gid).Scan(&id, &name, &length, &credit, &isrcs)
+	if err == sql.ErrNoRows {
+		return RecordingInfo{}, false, nil
+	}
+	if err != nil {
+		return RecordingInfo{}, false, err
+	}
+	info := RecordingInfo{
+		MBID:         core.MBID(gid),
+		Title:        name,
+		ArtistCredit: credit.String,
+		ISRC:         core.ISRC(firstISRC(isrcs.String)),
+	}
+	if length.Valid {
+		info.DurationS = int(length.Int64 / 1000)
+	}
+	rgID, year, ok, err := m.earliestReleaseGroup(id)
+	if err != nil {
+		return RecordingInfo{}, false, err
+	}
+	if ok {
+		info.Year = year
+		if err := m.DB.QueryRow(`SELECT name FROM release_group WHERE id = ?`, rgID).
+			Scan(&info.Album); err != nil && err != sql.ErrNoRows {
+			return RecordingInfo{}, false, err
+		}
+	}
+	if info.Credits, err = m.recordingCredits(id); err != nil {
+		return RecordingInfo{}, false, err
+	}
+	return info, true, nil
+}

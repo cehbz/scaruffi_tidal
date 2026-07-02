@@ -265,6 +265,51 @@ func (m *MirrorDB) albumArtistCredits(rgGID string) (core.Credits, error) {
 	return cs, rows.Err()
 }
 
+// AlbumInfo is a release-group's album identity: what GM materialization needs to
+// build a self-contained album entry (identity, credit, vintage, traits).
+type AlbumInfo struct {
+	MBID            core.MBID
+	Title           string
+	ArtistCredits   core.Credits
+	Year            int
+	Traits          []core.ReleaseTrait
+	DiscogsMasterID core.DiscogsMasterID
+}
+
+// AlbumByRG returns the album identity of a release-group by gid. ok=false when
+// the gid is unknown.
+func (m *MirrorDB) AlbumByRG(rgGID string) (AlbumInfo, bool, error) {
+	var info AlbumInfo
+	var name string
+	var dmid, year sql.NullInt64
+	err := m.DB.QueryRow(
+		`SELECT rg.name, rg.discogs_master_id, rgm.first_release_date_year
+		   FROM release_group rg
+		   LEFT JOIN release_group_meta rgm ON rgm.id = rg.id
+		  WHERE rg.gid = ?`, rgGID).Scan(&name, &dmid, &year)
+	if err == sql.ErrNoRows {
+		return AlbumInfo{}, false, nil
+	}
+	if err != nil {
+		return AlbumInfo{}, false, err
+	}
+	info.MBID = core.MBID(rgGID)
+	info.Title = name
+	if dmid.Valid && dmid.Int64 != 0 {
+		info.DiscogsMasterID = core.DiscogsMasterID(dmid.Int64)
+	}
+	if year.Valid {
+		info.Year = int(year.Int64)
+	}
+	if info.ArtistCredits, err = m.albumArtistCredits(rgGID); err != nil {
+		return AlbumInfo{}, false, err
+	}
+	if info.Traits, err = m.albumTraits(rgGID); err != nil {
+		return AlbumInfo{}, false, err
+	}
+	return info, true, nil
+}
+
 // albumTraits maps the release-group's secondary types to the curation ReleaseTraits.
 func (m *MirrorDB) albumTraits(rgGID string) ([]core.ReleaseTrait, error) {
 	rows, err := m.DB.Query(

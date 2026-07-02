@@ -11,6 +11,7 @@ func newResolvePerformanceCmd() *cobra.Command {
 	var work, label, catno string
 	var creditSpecs []string
 	var year, limit int
+	var mbOnly bool
 	cmd := &cobra.Command{
 		Use:   "resolve-performance",
 		Short: "Resolve a classical item to a federated performance (MB + Discogs)",
@@ -34,6 +35,7 @@ func newResolvePerformanceCmd() *cobra.Command {
 				Label:   label,
 				Catno:   catno,
 				Limit:   limit,
+				MBOnly:  mbOnly,
 			})
 			if err != nil {
 				return err
@@ -50,5 +52,6 @@ func newResolvePerformanceCmd() *cobra.Command {
 	cmd.Flags().StringVar(&label, "label", "", "within-block label selector")
 	cmd.Flags().StringVar(&catno, "catno", "", "within-block catalog-number selector")
 	cmd.Flags().IntVar(&limit, "limit", 25, "max performances to surface")
+	cmd.Flags().BoolVar(&mbOnly, "mb-only", false, "skip Discogs discovery/corroboration (fast; grades at most medium)")
 	return cmd
 }

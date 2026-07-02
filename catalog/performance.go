@@ -39,6 +39,10 @@ type PerformanceQuery struct {
 	Label   string
 	Catno   string
 	Limit   int
+	// MBOnly skips Discogs discovery/corroboration entirely (the composer+performer
+	// Discogs path is minutes-scale for a prolific composer); resolution stays on the
+	// MB spine and grades at most Medium.
+	MBOnly bool
 }
 
 // PerformanceRecording is one movement recording of a performance.
@@ -59,15 +63,18 @@ type WorkRef struct {
 // Performance is a resolved (or candidate) performance: the movement recordings
 // satisfying the conjunctive credit key, plus edition attributes and confidence.
 type Performance struct {
-	Work          WorkRef                `json:"work"`
-	Recordings    []PerformanceRecording `json:"recordings"`
-	Credits       core.Credits           `json:"matched_credits,omitempty"`
-	FirstYear     int                    `json:"first_year,omitempty"`
-	DiscogsMaster core.DiscogsMasterID   `json:"discogs_master_id,omitempty"`
-	Label         string                 `json:"label,omitempty"`
-	Catno         string                 `json:"catno,omitempty"`
-	Sources       []core.Source          `json:"sources"`
-	Confidence    Confidence             `json:"confidence"`
+	Work           WorkRef                `json:"work"`
+	Recordings     []PerformanceRecording `json:"recordings"`
+	Credits        core.Credits           `json:"matched_credits,omitempty"`
+	FirstYear      int                    `json:"first_year,omitempty"`
+	RGMBID         core.MBID              `json:"rg_mbid,omitempty"`
+	RGTitle        string                 `json:"rg_title,omitempty"`
+	RGArtistCredit string                 `json:"rg_artist_credit,omitempty"`
+	DiscogsMaster  core.DiscogsMasterID   `json:"discogs_master_id,omitempty"`
+	Label          string                 `json:"label,omitempty"`
+	Catno          string                 `json:"catno,omitempty"`
+	Sources        []core.Source          `json:"sources"`
+	Confidence     Confidence             `json:"confidence"`
 
 	clusterKey int64 // unexported: the earliest release-group id (cluster identity)
 }
@@ -104,11 +111,33 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 	if err != nil {
 		return PerformanceResult{}, err
 	}
-	dc, err := m.discogsPerformances(q)
-	if err != nil {
-		return PerformanceResult{}, err
+	var fallbackWarnings []string
+	if len(mb) == 0 && len(performerCredits(q.Credits)) > 0 {
+		// Title-twin family trap: the title-resolved group holds none of the
+		// requested performers' recordings. Rediscover the group from the
+		// performer's discography (see workGroupFromPerformers).
+		g2, ok, err := m.workGroupFromPerformers(q, composer)
+		if err != nil {
+			return PerformanceResult{}, err
+		}
+		if ok && g2.RootID != g.RootID {
+			if mb, err = m.mbPerformances(g2, q); err != nil {
+				return PerformanceResult{}, err
+			}
+			if len(mb) > 0 {
+				fallbackWarnings = append(fallbackWarnings,
+					"work-group "+string(g.RootMBID)+" ("+g.RootName+") had no matching performances; resolved via the performer's discography to "+string(g2.RootMBID)+" ("+g2.RootName+")")
+			}
+		}
+	}
+	var dc []dcPerf
+	if !q.MBOnly {
+		if dc, err = m.discogsPerformances(q); err != nil {
+			return PerformanceResult{}, err
+		}
 	}
 	perfs, warnings, err := m.reconcile(mb, dc, q)
+	warnings = append(fallbackWarnings, warnings...)
 	if err != nil {
 		return PerformanceResult{}, err
 	}
@@ -150,7 +179,11 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 
 	// Gate: captured iff exactly one performance AND the full requested credit set was
 	// matched on it (Sources includes MB, i.e. it carries recordings/ISRCs).
-	fullCredits := allCreditsMatched(selected, performerCredits(q.Credits))
+	gateWants, err := m.expandWants(performerCredits(q.Credits))
+	if err != nil {
+		return PerformanceResult{}, err
+	}
+	fullCredits := allCreditsMatched(selected, gateWants)
 	switch {
 	case len(selected) == 1 && fullCredits && len(selected[0].Recordings) > 0:
 		return PerformanceResult{Outcome: OutcomeCaptured, Performances: selected, Warnings: warnings}, nil
@@ -203,7 +236,7 @@ func (m *MirrorDB) filterByLabel(ps []Performance, label, catno string) ([]Perfo
 
 // allCreditsMatched reports whether every performance in ps has the full requested
 // performer credit set (used to decide captured vs candidates).
-func allCreditsMatched(ps []Performance, want core.Credits) bool {
+func allCreditsMatched(ps []Performance, want []wantCredit) bool {
 	for _, p := range ps {
 		if !creditsSatisfy(p.Credits, want) {
 			return false
@@ -259,7 +292,10 @@ func (m *MirrorDB) mbPerformances(g WorkGroup, q PerformanceQuery) ([]Performanc
 	}
 
 	// Conjunctive credit AND (performer roles only; conductor umbrella via the shared helper).
-	want := performerCredits(q.Credits)
+	want, err := m.expandWants(performerCredits(q.Credits))
+	if err != nil {
+		return nil, err
+	}
 	var kept []rec
 	for _, r := range recs {
 		if creditsSatisfy(r.credit, want) {
@@ -301,6 +337,11 @@ func (m *MirrorDB) mbPerformances(g WorkGroup, q PerformanceQuery) ([]Performanc
 			clusterKey: key,
 			Credits:    matchedForces(members[0].credit, want),
 		}
+		if key > 0 { // a real release-group (not a no-release singleton) → album identity
+			if err := m.releaseGroupIdentity(key, &p); err != nil {
+				return nil, err
+			}
+		}
 		for _, r := range members {
 			p.Recordings = append(p.Recordings, r.cand)
 		}
@@ -315,24 +356,104 @@ func (m *MirrorDB) mbPerformances(g WorkGroup, q PerformanceQuery) ([]Performanc
 	return out, nil
 }
 
-// creditsSatisfy reports whether have matches EVERY requested credit (AND), with the
-// conductor→chorus_master directing umbrella. Empty want → true.
-func creditsSatisfy(have, want core.Credits) bool {
+// releaseGroupIdentity fills p's RGMBID/RGTitle/RGArtistCredit from the cluster's
+// release-group row (the performance's album identity for GM materialization).
+func (m *MirrorDB) releaseGroupIdentity(rgID int64, p *Performance) error {
+	var gid, name string
+	var credit sql.NullString
+	err := m.DB.QueryRow(
+		`SELECT rg.gid, rg.name,
+		        (SELECT GROUP_CONCAT(a.name, ', ')
+		           FROM artist_credit_name acn JOIN artist a ON a.id = acn.artist
+		          WHERE acn.artist_credit = rg.artist_credit)
+		   FROM release_group rg WHERE rg.id = ?`, rgID).Scan(&gid, &name, &credit)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	p.RGMBID = core.MBID(gid)
+	p.RGTitle = name
+	p.RGArtistCredit = credit.String
+	return nil
+}
+
+// wantCredit is one requested credit expanded to every name its artist is known
+// by (MB primary name + aliases) — a Latin query matches a Cyrillic credit.
+type wantCredit struct {
+	Role  core.Role
+	Names []string
+}
+
+// wantsOf lifts plain credits to single-variant wants (no alias expansion).
+func wantsOf(cs core.Credits) []wantCredit {
+	out := make([]wantCredit, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, wantCredit{Role: c.Role, Names: []string{c.Name}})
+	}
+	return out
+}
+
+// expandWants lifts credits to alias-expanded wants via the mirror's alias table.
+func (m *MirrorDB) expandWants(cs core.Credits) ([]wantCredit, error) {
+	out := make([]wantCredit, 0, len(cs))
+	for _, c := range cs {
+		names, err := m.nameVariants(c.Name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, wantCredit{Role: c.Role, Names: names})
+	}
+	return out, nil
+}
+
+// matchesAny reports whether have carries role (or an umbrella'd role) under ANY
+// of the requested name variants.
+func matchesAny(have core.Credits, role core.Role, names []string) bool {
+	for _, n := range names {
+		if have.MatchesRole(role, n) {
+			return true
+		}
+		switch role {
+		case core.RoleConductor:
+			if have.MatchesRole(core.RoleChorusMaster, n) {
+				return true
+			}
+		case core.RoleOrchestra:
+			if have.MatchesRole(core.RoleChorus, n) || have.MatchesRole(core.RoleArtist, n) {
+				return true
+			}
+		case core.RoleChorus, core.RoleSoloist:
+			if have.MatchesRole(core.RoleArtist, n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// creditsSatisfy reports whether have matches EVERY requested credit (AND), with
+// two role umbrellas (identity stays name-exact per variant; only the role widens):
+//   - conductor also matches chorus_master (the a-cappella director);
+//   - the ensemble/performer roles (orchestra, chorus, soloist) also match the
+//     bare credited-artist role, and orchestra additionally matches chorus —
+//     the intent cannot know whether MB typed an ensemble's arc as performing
+//     orchestra, choir vocals, or left it as the artist credit only.
+//
+// Empty want → true.
+func creditsSatisfy(have core.Credits, want []wantCredit) bool {
 	for _, req := range want {
-		if have.MatchesRole(req.Role, req.Name) {
-			continue
+		if !matchesAny(have, req.Role, req.Names) {
+			return false
 		}
-		if req.Role == core.RoleConductor && have.MatchesRole(core.RoleChorusMaster, req.Name) {
-			continue
-		}
-		return false
 	}
 	return true
 }
 
 // matchedForces returns the subset of a recording's credits whose role is one of the
 // requested roles (the "matched credit set" captured on the performance).
-func matchedForces(have, want core.Credits) core.Credits {
+func matchedForces(have core.Credits, want []wantCredit) core.Credits {
 	if len(want) == 0 {
 		return nil
 	}
