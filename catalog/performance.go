@@ -525,6 +525,75 @@ func albumMatchesWork(work map[string]bool, albumText string) bool {
 	return !workHasDigit || sharedDigit
 }
 
+// dcTrack is a Discogs release track: its position, title, and the ID used to key
+// track-level credits.
+type dcTrack struct {
+	ID    int64
+	Title string
+}
+
+// dcCredit is a Discogs release_artist/track credit: an artist and its free-text role.
+type dcCredit struct {
+	ArtistID int64
+	Role     string
+}
+
+// workGroupTracks reconstructs the work from track evidence: the tracks whose titles
+// match the work tokens. When no track title matches but the release title does, the
+// whole album is the work (movement-titled tracks) and all tracks are the group.
+// nil = this album is not this work.
+func workGroupTracks(work map[string]bool, releaseTitle string, tracks []dcTrack) []dcTrack {
+	var group []dcTrack
+	for _, t := range tracks {
+		if albumMatchesWork(work, t.Title) {
+			group = append(group, t)
+		}
+	}
+	if group != nil {
+		return group
+	}
+	if albumMatchesWork(work, releaseTitle) && len(tracks) > 0 {
+		return tracks
+	}
+	return nil
+}
+
+// groupComposerConfirmed ties the composer to the reconstructed work-group: a track-
+// level composer credit on a group track confirms; a release-level composer credit
+// confirms only when NO group track carries any composer-role credit (the guard that
+// rejects a release-level filler credit on a multi-composer album whose matched group
+// belongs to another composer).
+func groupComposerConfirmed(group []dcTrack, trackCredits map[int64][]dcCredit, releaseCredits []dcCredit, composerID int64) bool {
+	groupHasAnyComposer := false
+	for _, tr := range group {
+		for _, c := range trackCredits[tr.ID] {
+			for _, r := range discogsRoles(c.Role) {
+				if r != core.RoleComposer {
+					continue
+				}
+				if c.ArtistID == composerID {
+					return true
+				}
+				groupHasAnyComposer = true
+			}
+		}
+	}
+	if groupHasAnyComposer {
+		return false
+	}
+	for _, c := range releaseCredits {
+		if c.ArtistID != composerID {
+			continue
+		}
+		for _, r := range discogsRoles(c.Role) {
+			if r == core.RoleComposer {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // dcPerf is a Discogs-side performance candidate: a master whose track/title matches
 // the work and whose release_artist roles satisfy the bridged credit AND.
 type dcPerf struct {

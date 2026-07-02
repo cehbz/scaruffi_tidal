@@ -446,3 +446,74 @@ func TestResolvePerformanceAliasNamedArtists(t *testing.T) {
 		t.Errorf("first year = %d, want 1999", p.FirstYear)
 	}
 }
+
+func TestWorkGroupTracks(t *testing.T) {
+	work := significantWorkTokens("Symphony No. 5")
+	tracks := []dcTrack{
+		{ID: 1, Title: "Symphony No. 5: I. Allegro con brio"},
+		{ID: 2, Title: "Symphony No. 5: II. Andante con moto"},
+		{ID: 3, Title: "Fidelio Overture"},
+	}
+	got := workGroupTracks(work, "Beethoven / Mahler: Orchestral Works", tracks)
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 2 {
+		t.Fatalf("want tracks 1,2 (the Symphony 5 group), got %+v", got)
+	}
+}
+
+func TestWorkGroupTracksReleaseTitleFallback(t *testing.T) {
+	// Movement-titled tracks share no token with the work; the release title carries it.
+	work := significantWorkTokens("Symphony No. 5")
+	tracks := []dcTrack{
+		{ID: 1, Title: "I. Allegro con brio"},
+		{ID: 2, Title: "II. Andante con moto"},
+	}
+	got := workGroupTracks(work, "Beethoven: Symphony No. 5", tracks)
+	if len(got) != 2 {
+		t.Fatalf("release-title fallback: want all 2 tracks, got %+v", got)
+	}
+}
+
+func TestWorkGroupTracksNoMatch(t *testing.T) {
+	work := significantWorkTokens("Symphony No. 5")
+	tracks := []dcTrack{{ID: 1, Title: "Ein Heldenleben"}}
+	if got := workGroupTracks(work, "Strauss: Ein Heldenleben", tracks); got != nil {
+		t.Fatalf("want nil (album is not this work), got %+v", got)
+	}
+}
+
+func TestGroupComposerConfirmedTrackLevel(t *testing.T) {
+	group := []dcTrack{{ID: 1, Title: "Symphony No. 5: I."}}
+	trackCredits := map[int64][]dcCredit{1: {{ArtistID: 953, Role: "Composed By"}}}
+	if !groupComposerConfirmed(group, trackCredits, nil, 953) {
+		t.Fatal("track-level composer credit on the group must confirm")
+	}
+}
+
+func TestGroupComposerConfirmedTrapRejected(t *testing.T) {
+	// The matched group is Mahler's (track-credited); a Beethoven release-level
+	// filler credit must NOT confirm Beethoven for this group.
+	group := []dcTrack{{ID: 1, Title: "Symphony No. 5: I."}}
+	trackCredits := map[int64][]dcCredit{1: {{ArtistID: 953, Role: "Composed By"}}}
+	releaseCredits := []dcCredit{{ArtistID: 952, Role: "Composed By"}}
+	if groupComposerConfirmed(group, trackCredits, releaseCredits, 952) {
+		t.Fatal("multi-composer trap: group composer is Mahler; Beethoven must be rejected")
+	}
+}
+
+func TestGroupComposerConfirmedReleaseLevelFallback(t *testing.T) {
+	// No track-level composer credits anywhere in the group -> release-level confirms.
+	group := []dcTrack{{ID: 1, Title: "Symphony No. 5: I."}}
+	trackCredits := map[int64][]dcCredit{1: {{ArtistID: 299702, Role: "Conductor"}}}
+	releaseCredits := []dcCredit{{ArtistID: 952, Role: "Composed By"}}
+	if !groupComposerConfirmed(group, trackCredits, releaseCredits, 952) {
+		t.Fatal("release-level composer credit must confirm when the group has no track-level composer")
+	}
+}
+
+func TestGroupComposerConfirmedCombinedRole(t *testing.T) {
+	group := []dcTrack{{ID: 1, Title: "Symphony No. 5: I."}}
+	trackCredits := map[int64][]dcCredit{1: {{ArtistID: 952, Role: "Composed By, Conductor"}}}
+	if !groupComposerConfirmed(group, trackCredits, nil, 952) {
+		t.Fatal("combined role string containing Composed By must confirm")
+	}
+}
