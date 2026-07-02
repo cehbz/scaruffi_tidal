@@ -250,6 +250,7 @@ type albumEntryJSON struct {
 	Tracklist       []trackRefJSON `json:"tracklist"`
 	DiscogsMasterID int64          `json:"discogs_master_id,omitempty"`
 	Sources         []string       `json:"sources,omitempty"`
+	Credits         []creditJSON   `json:"credits,omitempty"`
 	Provenance      provenanceJSON `json:"provenance"`
 	Verdict         verdictJSON    `json:"verdict"`
 	Edition         *editionOut    `json:"edition,omitempty"`
@@ -357,6 +358,15 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 			ISRC: string(t.ISRC), MBID: string(t.MBID), DurationS: t.DurationS})
 	}
 
+	rgCredits, err := m.ReleaseGroupCredits(core.MBID(s.RGMBID))
+	if err != nil {
+		return nil, ReportItem{}, err
+	}
+	credits := make([]creditJSON, 0, len(rgCredits))
+	for _, c := range rgCredits {
+		credits = append(credits, creditJSON{Artist: c.Name, Role: string(c.Role)})
+	}
+
 	album := core.Album{
 		Credits:       info.ArtistCredits,
 		Title:         info.Title,
@@ -383,6 +393,7 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 		Tracklist:       tl,
 		DiscogsMasterID: dmid,
 		Sources:         []string{"musicbrainz"},
+		Credits:         credits,
 		Provenance:      s.Provenance,
 		Verdict:         verdictOf(verdict),
 		Edition:         editionOf(s.Edition),

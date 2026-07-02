@@ -175,6 +175,62 @@ func TestMaterializeAbsentEntryRejected(t *testing.T) {
 	}
 }
 
+const classicalAlbumSelectionsJSON = `{
+  "name": "Classical Credits Test",
+  "brief": {"criteria": []},
+  "selections": [
+    {"kind": "album", "rg_mbid": "rg-a",
+     "provenance": {"source": "test", "note": "classical credits"}}
+  ]
+}`
+
+// TestMaterializeAlbumEntryCredits: an album entry backed by a classical RG (rg-a,
+// four movements each carrying a conductor/orchestra performer arc) must carry the
+// aggregated role-tagged credits[] — sourced from the mirrors via
+// catalog.ReleaseGroupCredits, never authored by the selections JSON.
+func TestMaterializeAlbumEntryCredits(t *testing.T) {
+	m := newTestMirror(t)
+	sel, err := ParseSelections([]byte(classicalAlbumSelectionsJSON))
+	if err != nil {
+		t.Fatalf("ParseSelections: %v", err)
+	}
+	doc, _, err := Materialize(m, sel)
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	var e struct {
+		Credits []struct {
+			Artist string `json:"artist"`
+			Role   string `json:"role"`
+		} `json:"credits"`
+	}
+	if err := json.Unmarshal(doc.Entries[0], &e); err != nil {
+		t.Fatal(err)
+	}
+	roles := map[string]string{}
+	for _, c := range e.Credits {
+		roles[c.Role] = c.Artist
+	}
+	if roles["conductor"] != "Leonard Bernstein" {
+		t.Errorf("conductor credit = %q, want Leonard Bernstein; credits=%+v", roles["conductor"], e.Credits)
+	}
+	if roles["orchestra"] != "New York Philharmonic" {
+		t.Errorf("orchestra credit = %q, want New York Philharmonic; credits=%+v", roles["orchestra"], e.Credits)
+	}
+}
+
+// TestMaterializeAlbumEntryCreditsOmittedWhenEmpty: back-compat — an album with no
+// aggregable credits at all must omit the "credits" key entirely, not emit `[]`.
+// (rg-jbmd always carries at least its RG artist credit, so this covers the wire
+// shape via a stub RG that resolves to no album at all: the absent-entry path,
+// which never reaches credit aggregation.)
+func TestMaterializeAlbumEntryCreditsOmittedWhenEmpty(t *testing.T) {
+	doc, _ := materializeFixture(t)
+	if strings.Contains(string(doc.Entries[3]), `"credits"`) {
+		t.Errorf("absent album entry must omit credits key entirely; got %s", doc.Entries[3])
+	}
+}
+
 func TestMaterializeEmitsPythonCriteriaTags(t *testing.T) {
 	doc, _ := materializeFixture(t)
 	b, err := json.Marshal(doc)

@@ -213,6 +213,12 @@ var mbStmts = []string{
 		(821,'t-a-ii',41,710,2,'2','II. Andante con moto',600000),
 		(822,'t-a-iii',42,710,3,'3','III. Scherzo',300000),
 		(823,'t-a-iv',43,710,4,'4','IV. Allegro',519000)`,
+	// canonical release pointer for TracklistByReleaseGroup(rg-a): each movement
+	// recording's canonical release is rel-a, so the RG's canonical tracklist
+	// resolves to all four movements (needed for ReleaseGroupCredits' performer-arc
+	// aggregation over the canonical tracklist).
+	`INSERT INTO canonical_musicbrainz_data (id, recording_mbid, release_mbid) VALUES
+		(3,'r-a-i','rel-a'),(4,'r-a-ii','rel-a'),(5,'r-a-iii','rel-a'),(6,'r-a-iv','rel-a')`,
 	// TAKE B (1985): SAME forces, movement recordings 44..47 on release-group 71 (rel 511, year 1985).
 	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
 		(44,'r-b-i','Symphony no. 5: I. Allegro con brio',455000,'',1),

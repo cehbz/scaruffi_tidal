@@ -108,3 +108,77 @@ func (m *MirrorDB) recordingCredits(recordingID int64) (core.Credits, error) {
 	}
 	return cs, rows.Err()
 }
+
+// ReleaseGroupCredits aggregates a release-group's role-tagged album credits: (a)
+// the RG's artist_credit_name names as RoleArtist credits, in credit order; (b) the
+// distinct performer arcs (recordingCredits' link-type role mapping — conductor,
+// orchestra, chorus, chorus_master, soloist — excluding its recording-level
+// RoleArtist rows, which are the recording's own artist credit, not a performer
+// arc) aggregated over the recordings of the RG's canonical tracklist
+// (TracklistByReleaseGroup — the same canonical-release resolution the golden-
+// master tracklist uses; no second canonical-release path). Deduped by (role,
+// core.NormalizeName(name)); order is first-seen: the RG artist credits, then each
+// canonical track's performer arcs in tracklist order. Unknown rgGID yields an
+// empty result, not an error (consistent with albumArtistCredits/
+// TracklistByReleaseGroup).
+func (m *MirrorDB) ReleaseGroupCredits(rgGID core.MBID) (core.Credits, error) {
+	var out core.Credits
+	seen := make(map[string]bool)
+	add := func(c core.Credit) {
+		key := string(c.Role) + "\x00" + core.NormalizeName(c.Name)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+
+	artistCredits, err := m.albumArtistCredits(string(rgGID))
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range artistCredits {
+		add(c)
+	}
+
+	tracks, err := m.TracklistByReleaseGroup(string(rgGID))
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tracks {
+		if t.MBID == "" {
+			continue
+		}
+		recID, ok, err := m.recordingIDByGID(string(t.MBID))
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		cs, err := m.recordingCredits(recID)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range cs {
+			if c.Role == core.RoleArtist {
+				continue // the recording's own artist credit, not a performer arc
+			}
+			add(c)
+		}
+	}
+	return out, nil
+}
+
+// recordingIDByGID resolves a recording's internal id by gid. ok=false when unknown.
+func (m *MirrorDB) recordingIDByGID(gid string) (int64, bool, error) {
+	var id int64
+	err := m.DB.QueryRow(`SELECT id FROM recording WHERE gid = ?`, gid).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
