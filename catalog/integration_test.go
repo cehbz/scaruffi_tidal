@@ -460,17 +460,15 @@ func composersContain(cs []string, want string) bool {
 //     classical compounds that came back EMPTY under the retired top-1 resolveWorkID; both now
 //     resolve as multi-movement work-groups.
 //
-// SCALE FINDING (see .superpowers/sdd/rw-6-report.md): the composer-bridged Discogs discovery
-// query (discogsPerformances) drives an un-indexed full scan of all ~19M dc.release rows — it
-// has no artist-filtered driving table, and SQLite resolves the composer EXISTS via
-// idx_release_artist_artist (~100k credit rows/probe for a prolific composer).  A
-// composer+performer query therefore does NOT complete in feasible time on the full 46 GB
-// mirror (observed: >6 min, no result).  This is the "build-time materialised concordance
-// table (corpus-scale batch)" item already noted in TODO.  Live coverage here exercises the
-// artist-first MB spine with the Discogs scan deliberately fast-exited (composer omitted → no
-// Discogs claim is attempted; or composer-only → no performer, so no claim), and LOGS the
-// cross-source gap rather than asserting a High-confidence reconciliation that cannot be
-// produced live.
+// LATENCY / COVERAGE NOTE (measured 2026-07-02): discogsPerformances is index-driven (it drives
+// from the composer's release_artist credits, no full scan), but for a prolific composer it is
+// still minutes-scale: Beethoven+Kleiber+VPO measured ~13 min cold and ~13 min warm on the real
+// mirror (X10 over USB3), iterating the composer's ~100k release_artist rows plus a per-candidate
+// N+1.  So this test keeps the composer OMITTED (or composer-only) to fast-exit discogsPerformances
+// and stay quick.  The composer+performer path was verified separately: it completes and DOES
+// produce cross-source High (the canonical DG 2530 516, master 287096), but at ~13 min it is not
+// viable interactively.  Fixes: the grain-correct performer-driven redesign and the build-time
+// concordance; see TODO and the KB tidalist node.
 const beethoven5WorkGID = "d03bff61-26fc-301b-98ac-4d8e85771cbc"
 
 func TestIntegrationResolvePerformance(t *testing.T) {
@@ -531,9 +529,10 @@ func TestIntegrationResolvePerformance(t *testing.T) {
 	t.Logf("Beethoven5 Bernstein/NYPhil: outcome=%s perfs=%d first-perf year=%d recs=%d isrcs=%d conf=%s sources=%v work=%q composers=%v",
 		res.Outcome, len(res.Performances), withRecs.FirstYear, len(withRecs.Recordings), isrcs,
 		withRecs.Confidence, withRecs.Sources, withRecs.Work.Name, withRecs.Work.Composers)
-	// Discogs cross-source corroboration is NOT asserted: the only query shape that triggers it
-	// (composer + performer) is non-viable live (SCALE FINDING).  On this MB-narrowed path
-	// discogsPerformances fast-exits, so the performance is MB-only / medium by design.
+	// Discogs cross-source corroboration is NOT asserted here: the only query shape that triggers
+	// it (composer + performer) is too slow to include in this test (~13 min; see the latency note
+	// above).  On this MB-narrowed path discogsPerformances fast-exits, so the performance is
+	// MB-only / medium by design.
 	if withRecs.Confidence == ConfidenceHigh {
 		t.Logf("NOTE: unexpected High confidence (Discogs corroborated) on the MB-narrowed path: master=%d label=%q",
 			withRecs.DiscogsMaster, withRecs.Label)
