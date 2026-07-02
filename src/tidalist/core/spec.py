@@ -149,6 +149,8 @@ def _golden_entry_to_dict(e: GoldenEntry) -> dict:
             d["sources"] = sorted(s.value for s in a.ids.sources)
         if a.styles:
             d["styles"] = sorted(a.styles)
+        if a.credits:
+            d["credits"] = [{"artist": c.artist, "role": c.role} for c in a.credits]
         return {**d, **prov_verdict}
     r = e.item
     return {
@@ -178,7 +180,8 @@ def _golden_entry_from_dict(d: dict) -> GoldenEntry:
                      first_released=d.get("year"),
                      traits=frozenset(ReleaseTrait(t) for t in d.get("traits", [])),
                      styles=frozenset(d.get("styles", [])),
-                     tracklist=tuple(_trackref_from_dict(t) for t in d.get("tracklist", [])))
+                     tracklist=tuple(_trackref_from_dict(t) for t in d.get("tracklist", [])),
+                     credits=tuple(Credit(c["artist"], c["role"]) for c in d.get("credits", [])))
     else:
         item = Recording(
             artist=d["artist"], title=d["title"], mbid=_mbid(d.get("mbid")),

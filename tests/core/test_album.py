@@ -1,6 +1,7 @@
 import pytest
 
 from tidalist.core.identifiers import ISRC, MBID, ExternalIds
+from tidalist.core.recording import Credit
 from tidalist.core.album import Album, TrackRef, ReleaseTrait
 
 
@@ -83,3 +84,18 @@ def test_album_with_tracklist_holds_it():
 def test_album_tracklist_defaults_empty_tuple():
     a = Album(artist="Traffic", title="John Barleycorn Must Die")
     assert a.tracklist == ()
+
+
+# --- Task 2 (credit-anchored render): Album.credits reuses recording.Credit ---
+
+def test_album_carries_credits():
+    a = Album(artist="Wiener Philharmoniker", title="Beethoven: Symphony No. 5",
+              credits=(Credit("Carlos Kleiber", "conductor"),
+                       Credit("Wiener Philharmoniker", "orchestra")))
+    assert a.credits == (Credit("Carlos Kleiber", "conductor"),
+                         Credit("Wiener Philharmoniker", "orchestra"))
+
+
+def test_album_credits_defaults_empty_tuple():
+    a = Album(artist="Traffic", title="John Barleycorn Must Die")
+    assert a.credits == ()

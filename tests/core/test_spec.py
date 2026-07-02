@@ -329,3 +329,56 @@ def test_legacy_album_golden_without_discogs_keys_loads():
     }
     album = from_golden(legacy).entries[0].item
     assert album.ids == ExternalIds(mbid=MBID("rg-old"))
+
+
+# --- Task 2 (credit-anchored render): album golden entries carry role-tagged credits ---
+
+def test_golden_album_entry_round_trips_with_credits():
+    brief = Brief("x", ())
+    credits = (Credit("Carlos Kleiber", "conductor"),
+              Credit("Wiener Philharmoniker", "orchestra"))
+    album = Album(artist="Wiener Philharmoniker", title="Beethoven: Symphony No. 5",
+                  ids=ExternalIds(mbid=MBID("rg1")), first_released=1975, credits=credits)
+    entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
+    g = GoldenPlaylist("x", brief, (entry,))
+    result = from_golden(to_golden(g))
+    a = result.entries[0].item
+    assert isinstance(a, Album)
+    assert a.credits == credits
+
+
+def test_golden_album_entry_serializes_credits():
+    from tidalist.core.spec import _golden_entry_to_dict
+    credits = (Credit("Carlos Kleiber", "conductor"),
+              Credit("Wiener Philharmoniker", "orchestra"))
+    album = Album(artist="Wiener Philharmoniker", title="Beethoven: Symphony No. 5",
+                  credits=credits)
+    entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
+    d = _golden_entry_to_dict(entry)
+    assert d["credits"] == [{"artist": "Carlos Kleiber", "role": "conductor"},
+                            {"artist": "Wiener Philharmoniker", "role": "orchestra"}]
+
+
+def test_golden_album_entry_missing_credits_key_loads_as_empty():
+    """Back-compat: an album dict with no 'credits' key yields credits=()."""
+    d = {
+        "name": "x",
+        "brief": {"criteria": []},
+        "entries": [{
+            "kind": "album", "artist": "Traffic",
+            "title": "John Barleycorn Must Die",
+            "provenance": {"source": "nl", "note": ""},
+            "verdict": {"admitted": True, "violations": []},
+        }],
+    }
+    result = from_golden(d)
+    assert result.entries[0].item.credits == ()  # type: ignore[union-attr]
+
+
+def test_golden_album_entry_no_credits_key_emitted_when_empty():
+    """Back-compat: to_golden omits 'credits' for a credit-less album (byte-identical to today)."""
+    from tidalist.core.spec import _golden_entry_to_dict
+    album = Album(artist="Traffic", title="John Barleycorn Must Die")
+    entry = GoldenEntry(album, Provenance("nl"), Verdict.ok())
+    d = _golden_entry_to_dict(entry)
+    assert "credits" not in d

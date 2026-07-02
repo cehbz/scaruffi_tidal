@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .identifiers import ISRC, MBID, ExternalIds
+from .recording import Credit
 
 
 class ReleaseTrait(StrEnum):
@@ -32,3 +33,4 @@ class Album:
     traits: frozenset[ReleaseTrait] = frozenset()
     styles: frozenset[str] = frozenset()
     tracklist: tuple[TrackRef, ...] = ()
+    credits: tuple[Credit, ...] = ()  # role-tagged forces + artist names, from the mirrors (never model-authored)
