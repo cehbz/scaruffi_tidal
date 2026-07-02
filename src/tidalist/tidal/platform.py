@@ -1,8 +1,10 @@
 """Map tidalapi objects to core value objects, and serve them through the Platform port."""
 
+import time
 from datetime import datetime
 
 import tidalapi
+from requests.exceptions import HTTPError
 from tidalapi.exceptions import ObjectNotFound
 
 from ..core.identifiers import ISRC, TrackId, PlaylistId
@@ -13,13 +15,38 @@ from ..core.catalog import Track, PlatformAlbum
 # 256 OK, 257 -> 500; the bound is characters, not UTF-8 bytes).
 _MAX_QUERY_LEN = 256
 
+# Measured 2026-07-02: a 6-minute live realize run lost 25/64 entries to transient
+# Tidal-side HTTP 500s on /v1/search (short, valid queries that succeed minutes later).
+# Retry 5xx a bounded number of times so unattended multi-hour runs survive these windows.
+_RETRY_SLEEPS_S = (1, 4)
+
+# Patchable seam for tests.
+_SLEEP = time.sleep
+
 
 def _clamp_query(query: str) -> str:
     if len(query) <= _MAX_QUERY_LEN:
         return query
     cut = query[:_MAX_QUERY_LEN]
-    head, sep, _ = cut.rpartition(" ")
-    return head if sep else cut
+    head, _, _ = cut.rpartition(" ")
+    return head if head else cut
+
+
+def _retry_5xx(fn):
+    """Call fn(), retrying with backoff on HTTPError with a 5xx status.
+
+    Non-HTTP errors, 4xx responses, and a final exhausted 5xx propagate unchanged.
+    """
+    attempts = len(_RETRY_SLEEPS_S) + 1
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except HTTPError as e:
+            status = getattr(e.response, "status_code", None)
+            is_5xx = status is not None and 500 <= status < 600
+            if not is_5xx or attempt == attempts - 1:
+                raise
+            _SLEEP(_RETRY_SLEEPS_S[attempt])
 
 
 class TidalPlatform:
@@ -29,7 +56,8 @@ class TidalPlatform:
         self._session = session
 
     def search_tracks(self, query: str, limit: int = 25) -> list[Track]:
-        results = self._session.search(_clamp_query(query), models=[tidalapi.media.Track], limit=limit)
+        clamped = _clamp_query(query)
+        results = _retry_5xx(lambda: self._session.search(clamped, models=[tidalapi.media.Track], limit=limit))
         return [track_from_tidal(t) for t in results["tracks"][:limit]]
 
     def track_by_isrc(self, isrc: ISRC) -> Track | None:
@@ -48,7 +76,8 @@ class TidalPlatform:
         self._session.playlist(playlist).add([str(t) for t in tracks])
 
     def search_albums(self, query: str, limit: int = 25) -> list[PlatformAlbum]:
-        results = self._session.search(_clamp_query(query), models=[tidalapi.album.Album], limit=limit)
+        clamped = _clamp_query(query)
+        results = _retry_5xx(lambda: self._session.search(clamped, models=[tidalapi.album.Album], limit=limit))
         return [_album_from_tidal(a) for a in results["albums"][:limit]]
 
     def album_tracks(self, album_id: TrackId) -> list[Track]:

@@ -2,8 +2,10 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+from requests.exceptions import HTTPError
 from tidalapi.exceptions import ObjectNotFound
 
+from tidalist.tidal import platform as platform_module
 from tidalist.tidal.platform import TidalPlatform
 from tidalist.core.catalog import PlatformAlbum
 
@@ -131,6 +133,15 @@ def test_search_tracks_clamp_hard_cuts_unbroken_query():
     session = _FakeSession()
     TidalPlatform(session).search_tracks("x" * 300)
     assert session.searched[0][0] == "x" * 256
+
+
+def test_search_tracks_clamp_never_sends_empty_query():
+    """A leading space before one giant token must not clamp to the empty string."""
+    session = _FakeSession()
+    TidalPlatform(session).search_tracks(" " + "x" * 300)
+    sent = session.searched[0][0]
+    assert sent
+    assert len(sent) <= 256
 
 
 def test_search_tracks_maps_and_limits():
@@ -264,3 +275,80 @@ def test_album_editions_returns_empty_list_on_api_error():
             raise RuntimeError("API error")
 
     assert TidalPlatform(_BrokenSession()).album_editions("999") == []
+
+
+# --- transient 5xx retry on search ---
+
+def _http_error(status_code):
+    """Build an HTTPError carrying a stub response, mirroring how requests attaches it."""
+    response = SimpleNamespace(status_code=status_code)
+    return HTTPError(response=response)
+
+
+class _FlakySession:
+    """Session whose search() raises a scripted sequence of exceptions before succeeding."""
+
+    def __init__(self, raises=(), tracks=(), albums=()):
+        self._raises = list(raises)
+        self._tracks = list(tracks)
+        self._albums = list(albums)
+        self.calls = 0
+
+    def search(self, query, models=None, limit=50):
+        self.calls += 1
+        if self._raises:
+            raise self._raises.pop(0)
+        if models and hasattr(models[0], "__name__") and models[0].__name__ == "Album":
+            return {"albums": self._albums}
+        return {"tracks": self._tracks}
+
+
+def test_search_tracks_retries_transient_5xx_then_succeeds(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(platform_module, "_SLEEP", lambda s: sleeps.append(s))
+    session = _FlakySession(raises=[_http_error(500), _http_error(500)], tracks=[_track(1, "Glad")])
+    out = TidalPlatform(session).search_tracks("Traffic")
+    assert [t.title for t in out] == ["Glad"]
+    assert session.calls == 3
+    assert sleeps == [1, 4]
+
+
+def test_search_tracks_exhausts_retries_on_persistent_5xx(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(platform_module, "_SLEEP", lambda s: sleeps.append(s))
+    session = _FlakySession(raises=[_http_error(500), _http_error(500), _http_error(503)])
+    with pytest.raises(HTTPError):
+        TidalPlatform(session).search_tracks("Traffic")
+    assert session.calls == 3
+    assert sleeps == [1, 4]
+
+
+def test_search_tracks_propagates_4xx_without_retry(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(platform_module, "_SLEEP", lambda s: sleeps.append(s))
+    session = _FlakySession(raises=[_http_error(404)])
+    with pytest.raises(HTTPError):
+        TidalPlatform(session).search_tracks("Traffic")
+    assert session.calls == 1
+    assert sleeps == []
+
+
+def test_search_tracks_propagates_non_http_error_without_retry(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(platform_module, "_SLEEP", lambda s: sleeps.append(s))
+    session = _FlakySession(raises=[RuntimeError("boom")])
+    with pytest.raises(RuntimeError):
+        TidalPlatform(session).search_tracks("Traffic")
+    assert session.calls == 1
+    assert sleeps == []
+
+
+def test_search_albums_retries_transient_5xx_then_succeeds(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(platform_module, "_SLEEP", lambda s: sleeps.append(s))
+    ta = _tidal_album(42)
+    session = _FlakySession(raises=[_http_error(500), _http_error(500)], albums=[ta])
+    out = TidalPlatform(session).search_albums("Traffic")
+    assert len(out) == 1
+    assert session.calls == 3
+    assert sleeps == [1, 4]
