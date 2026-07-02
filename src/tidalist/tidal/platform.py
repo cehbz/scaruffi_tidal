@@ -9,6 +9,19 @@ from ..core.identifiers import ISRC, TrackId, PlaylistId
 from ..core.catalog import Track, PlatformAlbum
 
 
+# Tidal /v1/search returns 500 for queries over 256 characters (measured 2026-07-02:
+# 256 OK, 257 -> 500; the bound is characters, not UTF-8 bytes).
+_MAX_QUERY_LEN = 256
+
+
+def _clamp_query(query: str) -> str:
+    if len(query) <= _MAX_QUERY_LEN:
+        return query
+    cut = query[:_MAX_QUERY_LEN]
+    head, sep, _ = cut.rpartition(" ")
+    return head if sep else cut
+
+
 class TidalPlatform:
     """Platform port backed by an authenticated tidalapi Session."""
 
@@ -16,7 +29,7 @@ class TidalPlatform:
         self._session = session
 
     def search_tracks(self, query: str, limit: int = 25) -> list[Track]:
-        results = self._session.search(query, models=[tidalapi.media.Track], limit=limit)
+        results = self._session.search(_clamp_query(query), models=[tidalapi.media.Track], limit=limit)
         return [track_from_tidal(t) for t in results["tracks"][:limit]]
 
     def track_by_isrc(self, isrc: ISRC) -> Track | None:
@@ -35,7 +48,7 @@ class TidalPlatform:
         self._session.playlist(playlist).add([str(t) for t in tracks])
 
     def search_albums(self, query: str, limit: int = 25) -> list[PlatformAlbum]:
-        results = self._session.search(query, models=[tidalapi.album.Album], limit=limit)
+        results = self._session.search(_clamp_query(query), models=[tidalapi.album.Album], limit=limit)
         return [_album_from_tidal(a) for a in results["albums"][:limit]]
 
     def album_tracks(self, album_id: TrackId) -> list[Track]:

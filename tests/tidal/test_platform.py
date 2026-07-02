@@ -104,6 +104,35 @@ class _FakeSession:
         return _FakeAlbumObj(self._album_tracks_map.get(sid, []))
 
 
+def test_search_tracks_clamps_query_to_tidal_bound():
+    """Tidal /v1/search returns 500 for queries over 256 chars (measured 2026-07-02);
+    the adapter clamps at a token boundary before the wire."""
+    session = _FakeSession()
+    long_query = " ".join(["word"] * 80)  # 399 chars
+    TidalPlatform(session).search_tracks(long_query)
+    sent = session.searched[0][0]
+    assert len(sent) <= 256
+    assert long_query.startswith(sent)
+    assert long_query[len(sent)] == " "  # cut lands on a token boundary
+
+
+def test_search_albums_clamps_query_to_tidal_bound():
+    session = _FakeSession()
+    long_query = " ".join(["word"] * 80)
+    TidalPlatform(session).search_albums(long_query)
+    sent = session.searched[0][0]
+    assert len(sent) <= 256
+    assert long_query.startswith(sent)
+    assert long_query[len(sent)] == " "
+
+
+def test_search_tracks_clamp_hard_cuts_unbroken_query():
+    """A query with no whitespace inside the bound still gets clamped."""
+    session = _FakeSession()
+    TidalPlatform(session).search_tracks("x" * 300)
+    assert session.searched[0][0] == "x" * 256
+
+
 def test_search_tracks_maps_and_limits():
     session = _FakeSession(tracks=[_track(1, "Glad"), _track(2, "Empty Pages")])
     out = TidalPlatform(session).search_tracks("Traffic", limit=1)
