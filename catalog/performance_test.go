@@ -517,3 +517,43 @@ func TestGroupComposerConfirmedCombinedRole(t *testing.T) {
 		t.Fatal("combined role string containing Composed By must confirm")
 	}
 }
+
+func TestTracksForBatch(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.tracksFor([]int64{583800, 382820})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[583800]) != 2 || got[583800][0].Title != "Glad" {
+		t.Fatalf("release 583800: want [Glad, Freedom Rider], got %+v", got[583800])
+	}
+	// 382820: the sub-track (parent_track_id=110) is excluded.
+	if len(got[382820]) != 1 || got[382820][0].Title != "John Barleycorn Suite" {
+		t.Fatalf("release 382820: want the single top-level track, got %+v", got[382820])
+	}
+}
+
+func TestReleaseArtistsForBatch(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.releaseArtistsFor([]int64{60000, 60001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[60000]) != 3 { // Composed By + Conductor + Orchestra
+		t.Fatalf("release 60000: want 3 credits, got %+v", got[60000])
+	}
+	if len(got[60001]) != 2 {
+		t.Fatalf("release 60001: want 2 credits, got %+v", got[60001])
+	}
+}
+
+func TestTrackArtistsForBatchEmpty(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.trackArtistsFor([]int64{583800})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 { // fixture has no track_artist rows for 583800
+		t.Fatalf("want empty map, got %+v", got)
+	}
+}

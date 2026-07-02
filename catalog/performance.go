@@ -538,6 +538,80 @@ type dcCredit struct {
 	Role     string
 }
 
+// tracksFor returns the top-level tracks of each release, seq-ordered — one query.
+func (m *MirrorDB) tracksFor(releaseIDs []int64) (map[int64][]dcTrack, error) {
+	in, args := intInClause(releaseIDs)
+	rows, err := m.DB.Query(
+		`SELECT release_id, id, title FROM dc.track
+		  WHERE release_id IN (`+in+`) AND parent_track_id IS NULL
+		  ORDER BY release_id, seq`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]dcTrack{}
+	for rows.Next() {
+		var rid int64
+		var tr dcTrack
+		var title sql.NullString
+		if err := rows.Scan(&rid, &tr.ID, &title); err != nil {
+			return nil, err
+		}
+		tr.Title = title.String
+		out[rid] = append(out[rid], tr)
+	}
+	return out, rows.Err()
+}
+
+// trackArtistsFor returns each track's credits for all tracks of the releases — one query.
+func (m *MirrorDB) trackArtistsFor(releaseIDs []int64) (map[int64][]dcCredit, error) {
+	in, args := intInClause(releaseIDs)
+	rows, err := m.DB.Query(
+		`SELECT ta.track_id, ta.artist_id, ta.role
+		   FROM dc.track_artist ta JOIN dc.track t ON t.id = ta.track_id
+		  WHERE t.release_id IN (`+in+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]dcCredit{}
+	for rows.Next() {
+		var tid int64
+		var c dcCredit
+		var role sql.NullString
+		if err := rows.Scan(&tid, &c.ArtistID, &role); err != nil {
+			return nil, err
+		}
+		c.Role = role.String
+		out[tid] = append(out[tid], c)
+	}
+	return out, rows.Err()
+}
+
+// releaseArtistsFor returns each release's release-level credits — one query.
+func (m *MirrorDB) releaseArtistsFor(releaseIDs []int64) (map[int64][]dcCredit, error) {
+	in, args := intInClause(releaseIDs)
+	rows, err := m.DB.Query(
+		`SELECT release_id, artist_id, role FROM dc.release_artist
+		  WHERE release_id IN (`+in+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]dcCredit{}
+	for rows.Next() {
+		var rid int64
+		var c dcCredit
+		var role sql.NullString
+		if err := rows.Scan(&rid, &c.ArtistID, &role); err != nil {
+			return nil, err
+		}
+		c.Role = role.String
+		out[rid] = append(out[rid], c)
+	}
+	return out, rows.Err()
+}
+
 // workGroupTracks reconstructs the work from track evidence: the tracks whose titles
 // match the work tokens. When no track title matches but the release title does, the
 // whole album is the work (movement-titled tracks) and all tracks are the group.
