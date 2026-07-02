@@ -19,6 +19,7 @@ func Build(dir string) (mbPath, dcPath string, err error) {
 	dcPath = filepath.Join(dir, "dc.db")
 	all := append(append([]string{}, mbStmts...), mbTwinFamilyStmts...)
 	all = append(all, mbAliasStmts...)
+	all = append(all, mbGenericTitleFloodStmts()...)
 	if err = exec(mbPath, all); err != nil {
 		return "", "", err
 	}
@@ -333,6 +334,40 @@ var mbAliasStmts = []string{
 	`INSERT INTO medium (id, release, position, format, track_count) VALUES (713,513,1,2,1)`,
 	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES
 		(850,'t-sacre',63,713,1,'1','Le Sacre du printemps',2040000)`,
+}
+
+// genericTitleFloodTitle is the exact title shared by work 310 (the real Beethoven
+// Symphony No. 5, see mbStmts) and every decoy work below — an exact text match so
+// their FTS bm25 scores tie with the real work's, reproducing a generic-title flood.
+const genericTitleFloodTitle = "Symphony no. 5 in C minor, op. 67"
+
+// genericTitleFloodComposer is the decoy composer id (mb artist), credited on every
+// flood work instead of Beethoven (artist 50).
+const genericTitleFloodComposer = 900
+
+// mbGenericTitleFloodStmts seeds a wall of 30 decoy works — same exact title as the
+// real Beethoven Symphony No. 5 (work 310), composed by an unrelated decoy composer
+// — with ids chosen BELOW 310. FTS5 bm25 ties (identical title text) break by
+// ascending rowid (verified empirically), so every decoy outranks work 310 and the
+// real work falls outside a naive top-25 candidate window. This reproduces the
+// production symptom: a generic title ("Symphony No. 5") drowns among hundreds of
+// same-titled works by other composers, and the true composer's work never enters
+// the FTS candidate window that resolveWorkGroup filters by composer.
+func mbGenericTitleFloodStmts() []string {
+	stmts := []string{
+		fmt.Sprintf(`INSERT INTO artist (id, gid, name, comment, type) VALUES (%d, 'a-flood-composer', 'Anton Fluter', '', 1)`,
+			genericTitleFloodComposer),
+	}
+	for id := int64(200); id < 230; id++ { // 30 decoys, all id < 310 (the real work's id)
+		stmts = append(stmts,
+			fmt.Sprintf(`INSERT INTO work (id, gid, name, type, comment) VALUES (%d, 'w-flood-%d', %q, 1, '')`,
+				id, id, genericTitleFloodTitle),
+			fmt.Sprintf(`INSERT INTO work_fts (rowid, title) VALUES (%d, %q)`, id, genericTitleFloodTitle),
+			fmt.Sprintf(`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (%d, 2, %d, %d, 0)`,
+				1000+id, genericTitleFloodComposer, id),
+		)
+	}
+	return stmts
 }
 
 var dcStmts = []string{

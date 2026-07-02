@@ -60,10 +60,36 @@ type WorkGroup struct {
 // are excluded by matching only 281.
 const workGroupLinkParts = 281
 
+// composerLinkType is l_artist_work link_type 168 (composer).
+const composerLinkType = 168
+
 func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, error) {
-	// (a) candidate works by title FTS.
-	rows, err := m.DB.Query(
-		`SELECT rowid FROM work_fts WHERE work_fts MATCH ? ORDER BY rank LIMIT 25`, ftsTitle(title))
+	// (a) candidate works by title FTS, composer-CONDITIONED when the composer
+	// resolves to a known artist: l_artist_work (168, composer) is joined into
+	// the candidate query itself so the top-25 window is composed of works
+	// credited to that artist, not the unconditioned title-FTS top-25. A generic
+	// title ("Symphony No. 5") otherwise drowns among hundreds of same-titled
+	// works by other composers and the intended composer's work never enters an
+	// unconditioned window (see TestResolveWorkGroupSurvivesGenericTitleFlood).
+	// When no composer is requested, or the requested name resolves to no known
+	// artist, the query is unconditioned — existing behavior is unchanged, and
+	// (b) below still filters by composer name/alias as before.
+	var rows *sql.Rows
+	var err error
+	if composerID, ok, cerr := m.composerIDFor(composer); cerr != nil {
+		return WorkGroup{}, false, cerr
+	} else if ok {
+		rows, err = m.DB.Query(
+			`SELECT DISTINCT f.rowid
+			   FROM work_fts f
+			   JOIN l_artist_work law ON law.entity1 = f.rowid
+			   JOIN link l ON l.id = law.link AND l.link_type = ?
+			  WHERE work_fts MATCH ? AND law.entity0 = ?
+			  ORDER BY f.rank LIMIT 25`, composerLinkType, ftsTitle(title), composerID)
+	} else {
+		rows, err = m.DB.Query(
+			`SELECT rowid FROM work_fts WHERE work_fts MATCH ? ORDER BY rank LIMIT 25`, ftsTitle(title))
+	}
 	if err != nil {
 		return WorkGroup{}, false, err
 	}
@@ -298,6 +324,17 @@ func (m *MirrorDB) workGroupFromPerformers(q PerformanceQuery, composer string) 
 	return WorkGroup{}, false, nil
 }
 
+// composerIDFor resolves a composer name to its artist id for candidate-query
+// conditioning (resolveWorkGroup step (a)). Returns ok=false, nil error when
+// composer is empty or resolves to no known artist — the caller then falls back
+// to an unconditioned candidate query, preserving existing behavior.
+func (m *MirrorDB) composerIDFor(composer string) (int64, bool, error) {
+	if composer == "" {
+		return 0, false, nil
+	}
+	return m.resolveArtistID(composer)
+}
+
 // composerAmong reports whether any credited composer name matches any requested
 // variant (normalized comparison via core.Credits.MatchesRole).
 func composerAmong(credited, variants []string) bool {
@@ -320,8 +357,8 @@ func (m *MirrorDB) workComposers(workID int64) ([]string, error) {
 		   FROM l_artist_work law
 		   JOIN link l ON l.id = law.link
 		   JOIN artist a ON a.id = law.entity0
-		  WHERE law.entity1 = ? AND l.link_type = 168
-		  ORDER BY law.link_order`, workID)
+		  WHERE law.entity1 = ? AND l.link_type = ?
+		  ORDER BY law.link_order`, workID, composerLinkType)
 	if err != nil {
 		return nil, err
 	}

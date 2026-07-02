@@ -93,6 +93,31 @@ func TestResolveWorkGroupFromMovementWalksToParent(t *testing.T) {
 	}
 }
 
+func TestResolveWorkGroupSurvivesGenericTitleFlood(t *testing.T) {
+	m := newTestMirror(t)
+	// The fixture seeds 30 decoy works titled EXACTLY like the real Beethoven
+	// Symphony No. 5 (work 310), composed by an unrelated decoy composer, ranked
+	// ahead of the real work in title-FTS order (see mirrorfixture's
+	// mbGenericTitleFloodStmts). A candidate query that takes the top-25 FTS hits
+	// BEFORE filtering by composer never sees the real work at all — the
+	// production symptom for generic titles like "Symphony No. 5". The composer
+	// filter must be joined into candidate generation itself so a composer id
+	// that resolves conditions the FTS query, not just the post-filter.
+	g, ok, err := m.resolveWorkGroup("Symphony no. 5 in C minor, op. 67", "Beethoven")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected the Beethoven work-group to resolve despite the 30-decoy title flood")
+	}
+	if g.RootMBID != "w-sym5" {
+		t.Errorf("root = %q, want w-sym5 (the Beethoven parent, not a decoy)", g.RootMBID)
+	}
+	if len(g.Composers) == 0 || g.Composers[0] != "Ludwig van Beethoven" {
+		t.Errorf("composers = %v, want Beethoven", g.Composers)
+	}
+}
+
 func TestResolveWorkGroupComposerMismatchIsAbsent(t *testing.T) {
 	m := newTestMirror(t)
 	// The bare title "Symphony no. 5 in C minor" is ambiguous across composers; a
