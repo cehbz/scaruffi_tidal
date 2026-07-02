@@ -8,7 +8,7 @@ two are separate so gaps can be reviewed before anything is created on the platf
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import NamedTuple, Protocol, runtime_checkable
 
 from .album import Album
 from .edition import EditionPreference, EditionPolicy
@@ -44,6 +44,7 @@ class RealizedEntry:
     golden: GoldenEntry
     items: tuple[PlatformItem, ...] = ()
     compromises: tuple[Compromise, ...] = ()
+    gap_reason: str | None = None  # machine-readable reason when items is empty (album gaps only)
 
     @property
     def is_gap(self) -> bool:
@@ -65,11 +66,18 @@ class Realization:
         return tuple((e.golden, c) for e in self.entries for c in e.compromises)
 
 
+class AlbumResolution(NamedTuple):
+    """Result of resolving a golden Album: items (empty on gap), fidelity compromises,
+    and — when items is empty — a machine-readable reason for the gap (None otherwise)."""
+    items: list[PlatformItem]
+    compromises: tuple[Compromise, ...]
+    gap_reason: str | None
+
+
 @runtime_checkable
 class Realizer(Protocol):
     def resolve(self, recording: Recording) -> tuple[PlatformItem | None, tuple[Compromise, ...]]: ...
-    def resolve_album(self, album: Album,
-                      preference: EditionPreference) -> tuple[list[PlatformItem], tuple[Compromise, ...]]: ...
+    def resolve_album(self, album: Album, preference: EditionPreference) -> AlbumResolution: ...
     def emit(self, name: str, items: list[PlatformItem]) -> str: ...
 
 
@@ -89,8 +97,9 @@ def realize(
             realized.append(RealizedEntry(e, items=items, compromises=comps))
         elif isinstance(e.item, Album):
             effective_preference = e.edition if e.edition is not None else preference
-            items_list, comps = realizer.resolve_album(e.item, effective_preference)
-            realized.append(RealizedEntry(e, items=tuple(items_list), compromises=comps))
+            items_list, comps, gap_reason = realizer.resolve_album(e.item, effective_preference)
+            realized.append(RealizedEntry(e, items=tuple(items_list), compromises=comps,
+                                          gap_reason=gap_reason))
         else:
             realized.append(RealizedEntry(e, items=(), compromises=()))
     return Realization(golden.name, tuple(realized))

@@ -62,18 +62,21 @@ def main():
             rec["skipped"] = "not admitted"
         else:
             try:
+                gap_reason = None
                 if isinstance(e.item, Recording):
                     pi, comps = realizer.resolve(e.item)
                     items = [pi] if pi is not None else []
                 else:
                     pref = e.edition if e.edition is not None else default_pref
-                    items, comps = realizer.resolve_album(e.item, pref)
+                    items, comps, gap_reason = realizer.resolve_album(e.item, pref)
                 rec["items"] = [{"ref": it.ref, "title": it.title,
                                  "artists": list(it.artists), "isrc": it.isrc,
                                  "quality": str(it.quality)} for it in items]
                 rec["compromises"] = [{"facet": c.facet, "desired": c.desired,
                                        "used": c.used, "note": c.note} for c in comps]
                 rec["gap"] = not items
+                if rec["gap"]:
+                    rec["gap_reason"] = gap_reason
             except Exception as ex:  # keep the sweep alive; the error IS the datum
                 rec["error"] = f"{type(ex).__name__}: {ex}"
                 rec["gap"] = True

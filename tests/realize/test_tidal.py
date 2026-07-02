@@ -133,11 +133,12 @@ def test_resolve_album_drops_wrong_artist():
         albums=[wrong_artist],
         album_track_map={"A-wrong": [_album_track("T1", "Glad")]},
     )
-    items, compromise = TidalRealizer(cat).resolve_album(
+    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(
         _domain_album(), EditionPolicy.default()
     )
     assert items == []
     assert compromise == ()
+    assert gap_reason is not None
 
 
 def test_resolve_album_picks_original_over_deluxe():
@@ -152,11 +153,12 @@ def test_resolve_album_picks_original_over_deluxe():
         albums=[deluxe, original],
         album_track_map={"A-orig": tracks, "A-deluxe": tracks[:1]},
     )
-    items, compromise = TidalRealizer(cat).resolve_album(
+    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(
         _domain_album(), EditionPolicy.default()
     )
     assert [i.ref for i in items] == ["T1", "T2"]
     assert all(i.quality is MatchQuality.STRONG for i in items)
+    assert gap_reason is None
 
 
 def test_resolve_album_returns_tracks_in_order():
@@ -171,17 +173,18 @@ def test_resolve_album_returns_tracks_in_order():
         albums=[album],
         album_track_map={"A1": ordered_tracks},
     )
-    items, _ = TidalRealizer(cat).resolve_album(_domain_album(), EditionPolicy.default())
+    items, _, _ = TidalRealizer(cat).resolve_album(_domain_album(), EditionPolicy.default())
     assert [i.ref for i in items] == ["T1", "T2", "T3"]
 
 
 def test_resolve_album_returns_empty_when_nothing_matches():
     cat = FakePlatform([], albums=[], album_track_map={})
-    items, compromise = TidalRealizer(cat).resolve_album(
+    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(
         _domain_album(), EditionPolicy.default()
     )
     assert items == []
     assert compromise == ()
+    assert gap_reason is not None
 
 
 # --- Edition-distance / discography-enumeration tests ---
@@ -229,9 +232,10 @@ def test_resolve_album_prefers_edition_nearest_golden_tracklist():
             anchor_id: [ed10, ed22],
         },
     )
-    items, compromise = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
     assert [i.ref for i in items] == [f"T{n}" for n in range(1, 11)]
     assert all(i.quality is MatchQuality.STRONG for i in items)
+    assert gap_reason is None
 
 
 def test_resolve_album_multi_query_finds_via_the_stripped_artist():
@@ -250,7 +254,7 @@ def test_resolve_album_multi_query_finds_via_the_stripped_artist():
         albums=[anchor],
         album_track_map={"A1": tracks},
     )
-    items, _ = TidalRealizer(cat).resolve_album(the_traffic_album, EditionPolicy.default())
+    items, _, _ = TidalRealizer(cat).resolve_album(the_traffic_album, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1", "T2"]
 
 
@@ -265,7 +269,7 @@ def test_resolve_album_title_only_query_finds_anchor_when_artist_queries_fail():
     cat = FakePlatform([], albums=[anchor],
                       album_track_map={"A1": [_album_track("T1", "Glad")]})
     album = Album(artist="unknown traffic", title="John Barleycorn Must Die")
-    items, _ = TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
+    items, _, _ = TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1"]
 
 
@@ -281,7 +285,7 @@ def test_resolve_album_editions_empty_falls_back_to_survivors():
         albums=[original],
         album_track_map={"A-orig": tracks},
     )
-    items, _ = TidalRealizer(cat).resolve_album(_domain_album(), EditionPolicy.default())
+    items, _, _ = TidalRealizer(cat).resolve_album(_domain_album(), EditionPolicy.default())
     assert [i.ref for i in items] == ["T1"]
 
 
@@ -296,22 +300,78 @@ def test_resolve_album_assembles_from_tracks_when_album_absent():
     t1 = _album_track("T1", "Frownland", artists=("Captain Beefheart",))
     t3 = _album_track("T3", "Dachau Blues", artists=("Captain Beefheart",))
     cat = FakePlatform([t1, t3], albums=[])      # search_albums empty -> assembly path
-    items, comps = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, comps, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1", "T3"]
     assert len(comps) == 1 and comps[0].facet == "album-source"
     assert "2/3" in comps[0].note
     assert "missing positions: 2" in comps[0].note   # missing position 2 reported
+    assert gap_reason is None   # partial assembly is not a gap
 
 
 def test_resolve_album_gaps_when_no_tracks_assemble():
     golden = Album(artist="X", title="Absent Album", tracklist=(_track_ref(1, "Nope"),))
     cat = FakePlatform([], albums=[])
-    items, comps = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, comps, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
     assert items == [] and comps == ()
+    assert gap_reason == "track-fallback: 0/1 tracks found"
 
 
 def test_resolve_album_no_tracklist_gaps():
     golden = Album(artist="X", title="Absent Album")   # no tracklist -> cannot assemble
     cat = FakePlatform([], albums=[])
-    items, comps = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, comps, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
     assert items == [] and comps == ()
+    assert gap_reason == "no-edition-matched: tried 2 anchor queries, 0 survivors"
+
+
+# --- Task 3: credit-anchored search + any-credit survivor match + gap reasons ---
+
+class _QuerySpyPlatform(FakePlatform):
+    """A FakePlatform that records every query passed to search_albums, in call order."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.album_queries: list[str] = []
+
+    def search_albums(self, query, limit=25):
+        self.album_queries.append(query)
+        return super().search_albums(query, limit)
+
+
+def test_anchor_queries_prefers_conductor_credit_first():
+    """A conductor credit anchors the very first search query, ahead of the compound
+    artist+title fallback."""
+    album = Album(artist="Wiener Philharmoniker", title="Symphony No. 5",
+                  credits=(Credit("Carlos Kleiber", "conductor"),))
+    cat = _QuerySpyPlatform([], albums=[])
+    TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
+    assert cat.album_queries[0] == "Carlos Kleiber Symphony No. 5"
+
+
+def test_resolve_album_survivor_matches_via_credit_name():
+    """A candidate credited only to the orchestra (not the compound album.artist)
+    still survives the filter because it substring-matches a credit name."""
+    candidate = _album(id="A1", title="Symphony No. 5", artists=("Wiener Philharmoniker",))
+    album = Album(artist="Carlos Kleiber", title="Symphony No. 5",
+                  credits=(Credit("Wiener Philharmoniker", "orchestra"),))
+    cat = FakePlatform([], albums=[candidate],
+                       album_track_map={"A1": [_album_track("T1", "Allegro con brio")]})
+    items, _, gap_reason = TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
+    assert [i.ref for i in items] == ["T1"]
+    assert gap_reason is None
+
+
+def test_resolve_album_gap_reason_edition_scoring_none_candidate():
+    """When survivors exist but choose() picks nothing, the gap reason is
+    'edition-scoring: no candidate chosen'."""
+    from unittest.mock import patch
+
+    anchor = _album(id="A1", title="John Barleycorn Must Die", artists=("Traffic",))
+    cat = FakePlatform([], albums=[anchor],
+                       album_track_map={"A1": [_album_track("T1", "Glad")]})
+    with patch("tidalist.realize.tidal.choose", return_value=(None, ())):
+        items, comps, gap_reason = TidalRealizer(cat).resolve_album(
+            _domain_album(), EditionPolicy.default()
+        )
+    assert items == [] and comps == ()
+    assert gap_reason == "edition-scoring: no candidate chosen"

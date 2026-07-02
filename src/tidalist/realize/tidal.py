@@ -9,7 +9,7 @@ from ..core.ports import Platform
 from ..core.identifiers import TrackId
 from ..core.recording import Recording, Performance
 from ..core.catalog import Track
-from ..core.realize import PlatformItem, MatchQuality
+from ..core.realize import PlatformItem, MatchQuality, AlbumResolution
 from ..core.fidelity import (
     PlatformCandidate, IdentityFacet, EditionFacet, PerformanceFacet, choose,
     recording_artist_match, Compromise, QualityPreference,
@@ -43,10 +43,10 @@ class TidalRealizer:
         self,
         album: Album,
         preference: EditionPreference,
-    ) -> tuple[list[PlatformItem], tuple[Compromise, ...]]:
-        survivors = self._search_survivors(album)
+    ) -> AlbumResolution:
+        survivors, tried = self._search_survivors(album)
         if not survivors:
-            return self._assemble_from_tracks(album)
+            return self._assemble_from_tracks(album, tried)
         anchor = survivors[0]
         # The discography gives the full edition set; fall back to the search
         # survivors when it's empty (so `editions` is always non-empty here).
@@ -55,21 +55,27 @@ class TidalRealizer:
         facets = [IdentityFacet(), EditionFacet(preference)]
         chosen, comps = choose(album, candidates, facets)
         if chosen is None:
-            return [], ()
+            return AlbumResolution([], (), "edition-scoring: no candidate chosen")
         tracks = chosen.tracks or tuple(self._platform.album_tracks(TrackId(chosen.ref)))
         items = [_item(t, MatchQuality.STRONG) for t in tracks]
-        return items, comps
+        return AlbumResolution(items, comps, None)
 
     def _candidate(self, edition, with_tracks: bool) -> PlatformCandidate:
         tracks = tuple(self._platform.album_tracks(edition.id)) if with_tracks else ()
         return PlatformCandidate(ref=str(edition.id), title=edition.title,
                                  artists=edition.artists, year=edition.year, tracks=tracks)
 
-    def _assemble_from_tracks(self, album: Album) -> tuple[list[PlatformItem], tuple[Compromise, ...]]:
+    def _assemble_from_tracks(self, album: Album, tried: int) -> AlbumResolution:
         """When no edition of the release-group is on the platform, assemble the
-        canonical tracklist track-by-track from individual catalog tracks."""
+        canonical tracklist track-by-track from individual catalog tracks.
+
+        `tried` is the number of anchor queries the search survivor pass attempted
+        (used to build the no-edition-matched gap reason when there's no tracklist
+        to fall back on)."""
         if not album.tracklist:
-            return [], ()
+            return AlbumResolution(
+                [], (), f"no-edition-matched: tried {tried} anchor queries, 0 survivors"
+            )
         items: list[PlatformItem] = []
         missing: list[int] = []
         for tr in album.tracklist:
@@ -79,21 +85,27 @@ class TidalRealizer:
             else:
                 missing.append(tr.position)
         if not items:
-            return [], ()
+            return AlbumResolution(
+                [], (), f"track-fallback: 0/{len(album.tracklist)} tracks found"
+            )
         comp = _album_source_compromise(album, len(items), len(album.tracklist), missing)
-        return items, (comp,)
+        return AlbumResolution(items, (comp,), None)
 
-    def _search_survivors(self, album: Album):
+    def _search_survivors(self, album: Album) -> tuple[list, int]:
+        """Return (survivors, anchor queries tried) — the count is reported in the
+        no-edition-matched gap reason when no survivors are ever found."""
+        tried = 0
         for query in _anchor_queries(album):
+            tried += 1
             hits = self._platform.search_albums(query)
             survivors = [
                 c for c in hits
-                if _artist_match_album(album.artist, c.artists)
+                if _artist_match_album(album, c.artists)
                 and _title_match_album(album.title, c.title)
             ]
             if survivors:
-                return survivors
-        return []
+                return survivors, tried
+        return [], tried
 
     def emit(self, name: str, items: list[PlatformItem]) -> str:
         playlist = self._platform.create_playlist(name)
@@ -124,10 +136,24 @@ def _strip_leading_the(s: str) -> str:
     return s[4:] if s.casefold().startswith("the ") else s
 
 
+# Anchor-query priority for role-tagged credits: conductor is most selective,
+# orchestra/chorus next, plain artist credits least (still ahead of the compound fallbacks).
+_ANCHOR_ROLE_PRIORITY = {"conductor": 0, "orchestra": 1, "chorus": 1, "artist": 2}
+
+
 def _anchor_queries(album: Album):
-    """Yield de-duplicated search queries for album, from most to least specific."""
+    """Yield de-duplicated search queries for album, from most to least specific.
+
+    Role-tagged credits (conductor, then orchestra/chorus, then artist) each anchor a
+    query `f"{credit.artist} {album.title}"`; the compound-artist fallbacks (verbatim,
+    the-stripped, title-only) follow, unchanged."""
     seen: set[str] = set()
-    candidates = [
+    ranked_credits = sorted(
+        (c for c in album.credits if c.role in _ANCHOR_ROLE_PRIORITY),
+        key=lambda c: _ANCHOR_ROLE_PRIORITY[c.role],
+    )
+    candidates = [f"{c.artist} {album.title}" for c in ranked_credits]
+    candidates += [
         f"{album.artist} {album.title}",
         f"{_strip_leading_the(album.artist)} {album.title}",
         album.title,
@@ -147,9 +173,17 @@ def _norm(s: str | None) -> str:
     return (s or "").casefold().strip()
 
 
-def _artist_match_album(artist: str, catalog_artists: tuple[str, ...]) -> bool:
-    a = artist.casefold()
-    return any(a in ca.casefold() or ca.casefold() in a for ca in catalog_artists)
+def _artist_match_album(album: Album, catalog_artists: tuple[str, ...]) -> bool:
+    """A candidate matches when the compound album.artist matches (either direction,
+    casefolded) OR any credit name does the same — a candidate credited to just the
+    orchestra/conductor still counts as the same album."""
+    names = (album.artist, *(c.artist for c in album.credits))
+    return any(_name_in_catalog(name, catalog_artists) for name in names)
+
+
+def _name_in_catalog(name: str, catalog_artists: tuple[str, ...]) -> bool:
+    n = name.casefold()
+    return any(n in ca.casefold() or ca.casefold() in n for ca in catalog_artists)
 
 
 def _title_match_album(title: str, catalog_title: str) -> bool:

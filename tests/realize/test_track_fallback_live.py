@@ -56,7 +56,7 @@ def test_trout_mask_replica_assembles_from_compilations_live():
     )
 
     realizer = TidalRealizer(TidalPlatform(authenticate(cfg.session_file)))
-    items, comps = realizer.resolve_album(album, EditionPolicy.default())
+    items, comps, _ = realizer.resolve_album(album, EditionPolicy.default())
 
     # Must be a partial (or full) assembly — NOT a gap.
     assert items, (

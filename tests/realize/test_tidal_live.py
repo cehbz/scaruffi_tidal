@@ -18,7 +18,7 @@ def _realizer_or_skip():
 @pytest.mark.integration
 def test_resolve_album_picks_original_edition_live():
     realizer = _realizer_or_skip()
-    items, _ = realizer.resolve_album(
+    items, _, _ = realizer.resolve_album(
         Album(artist="Traffic", title="John Barleycorn Must Die"), EditionPolicy.default())
     assert items, "expected album tracks"
     assert any("Glad" in i.title for i in items)
@@ -28,7 +28,7 @@ def test_resolve_album_picks_original_edition_live():
 @pytest.mark.integration
 def test_resolve_album_empty_for_nonexistent_album_live():
     realizer = _realizer_or_skip()
-    items, _ = realizer.resolve_album(
+    items, _, _ = realizer.resolve_album(
         Album(artist="Zzqx Nonexistent Band", title="No Such Album Qwerty Plugh"),
         EditionPolicy.default())
     assert items == []

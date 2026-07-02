@@ -15,7 +15,9 @@ from tidalist.core.errors import PlatformError
 class _FakeRealizer:
     """Resolves by recording title; a missing title is a gap. Records emit calls.
 
-    Also supports resolve_album: keyed by album title, returns (items_list, tuple[Compromise, ...]).
+    Also supports resolve_album: keyed by album title, seeded as
+    (items_list, tuple[Compromise, ...]); returns the AlbumResolution 3-tuple
+    (items, compromises, gap_reason=None).
     """
 
     def __init__(self, items: dict, albums: dict | None = None):
@@ -30,8 +32,9 @@ class _FakeRealizer:
     def resolve_album(self, album, preference):
         key = album.title.casefold()
         if key in self._albums:
-            return self._albums[key]
-        return [], ()
+            items, comps = self._albums[key]
+            return items, comps, None
+        return [], (), None
 
     def emit(self, name, items):
         ref = f"playlist-{len(self.emitted) + 1}"

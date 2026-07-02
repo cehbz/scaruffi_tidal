@@ -41,7 +41,7 @@ def test_mr_fantasy_resolves_to_the_original_not_the_deluxe_live():
     # Realize: distance-from-golden must pick the original over the 22-track deluxe
     # that Tidal album search surfaces first.
     realizer = TidalRealizer(TidalPlatform(authenticate(cfg.session_file)))
-    items, _ = realizer.resolve_album(album, EditionPolicy.default())
+    items, _, _ = realizer.resolve_album(album, EditionPolicy.default())
     assert items, "expected the album to resolve"
     assert len(items) <= 14, \
         f"resolved {len(items)} tracks — picked the deluxe, not the original"
