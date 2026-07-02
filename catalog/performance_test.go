@@ -91,25 +91,69 @@ func beethovenPerfQuery() PerformanceQuery {
 	}
 }
 
-func TestDiscogsPerformancesArtistFirstComposerRequired(t *testing.T) {
+func TestDiscogsPerformancesPerformerDriven(t *testing.T) {
 	m := newTestMirror(t)
-	dps, err := m.discogsPerformances(beethovenPerfQuery())
+	q := PerformanceQuery{
+		Work: "Symphony No. 5",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Ludwig van Beethoven"},
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+	}
+	got, err := m.discogsPerformances(q)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[int64]bool{}
-	for _, d := range dps {
-		got[d.MasterID] = true
+	if len(got) != 1 || got[0].MasterID != 70000 {
+		t.Fatalf("want exactly master 70000 (Beethoven 5, full force), got %+v", got)
 	}
-	// MASTER A (full) and MASTER B (partial) are Beethoven 5th by Bernstein → found via
-	// the bridge despite the formal query not phrase-matching the album title.
-	if !got[70000] || !got[70001] {
-		t.Fatalf("expected MASTER A(70000)+B(70001) via artist-first bridge; got %v", got)
+	if got[0].Year != 1963 || got[0].Label != "CBS" {
+		t.Fatalf("want 1963/CBS from the main release, got %+v", got[0])
 	}
-	// DECOY (70002) is a Mahler 5th by the SAME performers — the composer requirement
-	// must exclude it (a bare "Symphony No. 5" is composer-ambiguous).
-	if got[70002] {
-		t.Error("wrong-composer decoy (Mahler 5th) must be excluded by the composer requirement")
+}
+
+func TestDiscogsPerformancesMultiComposerTrap(t *testing.T) {
+	// Master 70002 satisfies Bernstein ∩ NYPhil and has "Symphony No. 5" tokens
+	// (Mahler's) plus a release-level Beethoven filler credit. The work-group's
+	// composer is Mahler -> Beethoven must NOT claim it.
+	m := newTestMirror(t)
+	q := PerformanceQuery{
+		Work: "Symphony No. 5",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Ludwig van Beethoven"},
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+	}
+	got, err := m.discogsPerformances(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range got {
+		if p.MasterID == 70002 {
+			t.Fatal("multi-composer trap: master 70002's Symphony-5 group is Mahler's")
+		}
+	}
+}
+
+func TestDiscogsPerformancesMahlerQueryTakesDecoy(t *testing.T) {
+	// The same album IS a valid Mahler 5 candidate for a Mahler query.
+	m := newTestMirror(t)
+	q := PerformanceQuery{
+		Work: "Symphony No. 5",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Gustav Mahler"},
+			{Role: core.RoleConductor, Name: "Leonard Bernstein"},
+			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
+		},
+	}
+	got, err := m.discogsPerformances(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].MasterID != 70002 {
+		t.Fatalf("want master 70002 for the Mahler query, got %+v", got)
 	}
 }
 
@@ -154,11 +198,12 @@ func TestReconcileGradesByConstraintCompleteness(t *testing.T) {
 	if a.Confidence != ConfidenceHigh || a.DiscogsMaster != 70000 {
 		t.Errorf("1963 full-constraint match → High/master 70000; got %q/%d", a.Confidence, a.DiscogsMaster)
 	}
-	// 1985 MB take reconciles with MASTER B (Beethoven+Bernstein, NO orchestra credit =
-	// PARTIAL) → Medium, still dual-identity.
+	// 1985 MB take has no Discogs candidate: master 70001 is Bernstein-only (no NYPhil
+	// credit), and the performer-driven intersection requires every performer arm →
+	// stays MB-only Medium, no Discogs identity.
 	b := byYear[1985]
-	if b.Confidence != ConfidenceMedium || b.DiscogsMaster != 70001 {
-		t.Errorf("1985 partial-constraint match → Medium/master 70001; got %q/%d", b.Confidence, b.DiscogsMaster)
+	if b.Confidence != ConfidenceMedium || b.DiscogsMaster != 0 {
+		t.Errorf("1985 unmatched (70001 excluded by the performer intersection) → MB-only Medium, no master; got %q/%d", b.Confidence, b.DiscogsMaster)
 	}
 }
 

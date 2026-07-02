@@ -155,6 +155,8 @@ var mbStmts = []string{
 	// Parent work + four movements (work-group via l_work_work 281 parts).
 	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (50,'a-beethoven','Ludwig van Beethoven','',1,952)`,
 	`INSERT INTO artist (id, gid, name, comment, type) VALUES (51,'a-brahms','Johannes Brahms','',1)`,
+	// Mahler bridge (the multi-composer-trap decoy's actual composer).
+	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (52,'a-mahler','Gustav Mahler','',1,953)`,
 	`INSERT INTO work (id, gid, name, type, comment) VALUES (310,'w-sym5','Symphony no. 5 in C minor, op. 67',1,'')`,
 	`INSERT INTO work (id, gid, name, type, comment) VALUES (311,'w-sym5-i','Symphony no. 5 in C minor, op. 67: I. Allegro con brio',1,'')`,
 	`INSERT INTO work (id, gid, name, type, comment) VALUES (312,'w-sym5-ii','Symphony no. 5 in C minor, op. 67: II. Andante con moto',1,'')`,
@@ -187,7 +189,7 @@ var mbStmts = []string{
 	// performance forces (shared by both takes).
 	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (60,'a-bernstein','Leonard Bernstein','',1,299702)`,
 	`INSERT INTO artist (id, gid, name, comment, type, discogs_artist_id) VALUES (61,'a-nyphil','New York Philharmonic','',5,950)`,
-	`INSERT INTO artist_fts (rowid, name) VALUES (60,'Leonard Bernstein'),(61,'New York Philharmonic'),(50,'Ludwig van Beethoven')`,
+	`INSERT INTO artist_fts (rowid, name) VALUES (60,'Leonard Bernstein'),(61,'New York Philharmonic'),(50,'Ludwig van Beethoven'),(52,'Gustav Mahler')`,
 	`INSERT INTO link (id, link_type) VALUES (30,151),(31,150)`, // 151 conductor, 150 orchestra
 	// TAKE A (1963): movement recordings 40..43 on release-group 70 (rel 510, year 1963).
 	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
@@ -402,4 +404,18 @@ var dcStmts = []string{
 		(60001,1,12,'Deutsche Grammophon','DG 415 861-2')`,
 	`INSERT INTO release_identifier (release_id, seq, type, value, description) VALUES
 		(60001,1,'Barcode','028941586124','')`,
+	// Movement tracks for the performer-driven candidates (work-group evidence).
+	`INSERT INTO track (id, release_id, parent_track_id, seq, position, title, duration) VALUES
+		(120,60000,NULL,1,'A1','Symphony No. 5: I. Allegro con brio','7:22'),
+		(121,60000,NULL,2,'A2','Symphony No. 5: II. Andante con moto','10:05'),
+		(130,60001,NULL,1,'1','Symphony No. 5: I. Allegro con brio','7:10'),
+		(140,60002,NULL,1,'A1','Symphony No. 5: I. Trauermarsch','12:40'),
+		(141,60002,NULL,2,'B1','Fidelio Overture','6:30')`,
+	// The Mahler decoy's matched group is track-credited to Mahler; the album also
+	// carries a release-level Beethoven filler credit (the multi-composer trap).
+	`INSERT INTO track_artist (id, track_id, artist_id, role, kind) VALUES
+		(1,140,953,'Composed By','extraartist'),
+		(2,141,952,'Composed By','extraartist')`,
+	`INSERT INTO release_artist (id, release_id, seq, artist_id, role, kind) VALUES
+		(9,60002,4,952,'Composed By','artist')`,
 }
