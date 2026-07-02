@@ -158,3 +158,16 @@ func TestNormalizeNameExported(t *testing.T) {
 		t.Errorf("diacritics must fold: got %q", NormalizeName("Brüggen"))
 	}
 }
+
+func TestNormalizeNameFoldsNonBreakingHyphen(t *testing.T) {
+	// MB stores "Yo‑Yo Ma" with U+2011 NON-BREAKING HYPHEN; an ASCII-hyphen query
+	// must fold to the same key so the Go filter agrees with the FTS layer.
+	nbHyphen, ascii := NormalizeName("Yo‑Yo Ma"), NormalizeName("Yo-Yo Ma")
+	if nbHyphen != ascii {
+		t.Errorf("non-breaking hyphen must fold to ASCII: got %q, want %q", nbHyphen, ascii)
+	}
+	cs := Credits{{Role: RoleArtist, Name: "Yo‑Yo Ma"}}
+	if !cs.MatchesRole(RoleArtist, "Yo-Yo Ma") {
+		t.Error("ASCII-hyphen query should match a non-breaking-hyphen credit name")
+	}
+}

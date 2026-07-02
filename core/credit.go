@@ -77,8 +77,9 @@ func (cs Credits) Has(role Role, name string) bool {
 }
 
 // normalizeName folds a name for matching: lowercase, NFD-decompose and strip
-// combining marks (so "Brüggen" matches "Bruggen"), and map curly apostrophes to
-// ASCII. Mirrors the mirrors' FTS remove_diacritics so the Go filter and FTS agree.
+// combining marks (so "Brüggen" matches "Bruggen"), and map curly apostrophes and
+// the non-breaking hyphen to ASCII. Mirrors the mirrors' FTS remove_diacritics so
+// the Go filter and FTS agree.
 func normalizeName(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -89,15 +90,20 @@ func normalizeName(s string) string {
 		b.WriteRune(r)
 	}
 	out := strings.ToLower(b.String())
-	return apostropheFolder.Replace(out)
+	return punctuationFolder.Replace(out)
 }
 
-// apostropheFolder maps the apostrophe variants MB uses (curly U+2019/U+2018 and
-// the modifier letter apostrophe U+02BC) to ASCII, so ASCII-apostrophe queries match.
-var apostropheFolder = strings.NewReplacer(
+// punctuationFolder maps the punctuation variants MB uses to their ASCII
+// equivalents, so ASCII-punctuation queries match: curly apostrophes (U+2019/
+// U+2018) and the modifier letter apostrophe (U+02BC) fold to "'"; the non-breaking
+// hyphen (U+2011, e.g. "Yo‑Yo Ma") folds to "-". Only variants confirmed present in
+// MB data are listed here (not the full Unicode hyphen/dash family: U+2010 HYPHEN
+// and U+2012 FIGURE DASH are unobserved in this corpus and deliberately omitted).
+var punctuationFolder = strings.NewReplacer(
 	"’", "'",
 	"‘", "'",
 	"ʼ", "'",
+	"‑", "-",
 )
 
 // NormalizeName exposes the matching fold (NFD + strip combining marks + fold curly
