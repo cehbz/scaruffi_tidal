@@ -217,6 +217,44 @@ func TestFindRecordingByTitleFiltersByCredits(t *testing.T) {
 	}
 }
 
+// TestFindRecordingByWorkAliasCreditConductor checks that find-recording's
+// --credit filter is alias-aware: the fixture's Gergiev/Sacre recording (63,
+// r-sacre-gergiev) carries a Cyrillic-primary conductor credit (Валерий
+// Гергиев, artist 66); a query for the Latin alias "Valery Gergiev" must
+// still select it, the same variant-aware matching ResolvePerformance already
+// gets via expandWants/creditsSatisfy.
+func TestFindRecordingByWorkAliasCreditConductor(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.FindRecording(RecordingQuery{
+		Work: "Le Sacre du printemps", Limit: 10,
+		Credits: core.Credits{{Role: core.RoleConductor, Name: "Valery Gergiev"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].MBID != "r-sacre-gergiev" {
+		t.Fatalf("alias-aware conductor filter should select r-sacre-gergiev; got %+v", res.Candidates)
+	}
+}
+
+// TestFindRecordingByWorkAliasCreditWrongNameFiltersOut guards against a
+// recall regression from alias expansion: a conductor name that resolves to
+// no known artist (so it expands to just itself) must still filter the
+// Gergiev recording out, not accidentally match everything.
+func TestFindRecordingByWorkAliasCreditWrongNameFiltersOut(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.FindRecording(RecordingQuery{
+		Work: "Le Sacre du printemps", Limit: 10,
+		Credits: core.Credits{{Role: core.RoleConductor, Name: "Wrong Conductor"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 0 {
+		t.Fatalf("a non-matching conductor name must filter out the recording; got %+v", res.Candidates)
+	}
+}
+
 func TestFindRecordingByWorkUsesWorkGroupNotTop1(t *testing.T) {
 	m := newTestMirror(t)
 	// The existing Palestrina case still works (single work, no movements).

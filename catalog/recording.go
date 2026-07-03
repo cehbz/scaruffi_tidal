@@ -130,39 +130,35 @@ func (m *MirrorDB) FindRecording(q RecordingQuery) (RecordingResult, error) {
 	}
 	// Apply any non-artist --credit filter uniformly (the SQL above narrows by
 	// artist only); no-op when q.Credits is empty.
-	out = filterByCredits(out, q.Credits)
+	out, err = m.filterByCredits(out, q.Credits)
+	if err != nil {
+		return RecordingResult{}, err
+	}
 	return RecordingResult{Candidates: out}, nil
 }
 
 // filterByCredits keeps only candidates whose attached credits satisfy ALL
-// requested credits (AND semantics). A requested conductor also matches a
-// chorus_master credit — the directing umbrella; asymmetric, so a literal
-// chorus_master request stays exact. Empty want returns the input unchanged.
-func filterByCredits(cands []RecordingCandidate, want core.Credits) []RecordingCandidate {
+// requested credits (AND semantics), alias-expanded via expandWants so a query
+// name variant (e.g. Latin "Valery Gergiev") matches a credit stored under any
+// of the artist's known names (e.g. Cyrillic primary "Валерий Гергиев") — the
+// same variant-aware satisfaction check ResolvePerformance already applies via
+// expandWants/creditsSatisfy (catalog/performance.go), reused here rather than
+// duplicated. Empty want returns the input unchanged.
+func (m *MirrorDB) filterByCredits(cands []RecordingCandidate, want core.Credits) ([]RecordingCandidate, error) {
 	if len(want) == 0 {
-		return cands
+		return cands, nil
 	}
-	matches := func(req core.Credit, have core.Credits) bool {
-		if have.MatchesRole(req.Role, req.Name) {
-			return true
-		}
-		// directing umbrella: a requested conductor also matches a chorus_master credit
-		return req.Role == core.RoleConductor && have.MatchesRole(core.RoleChorusMaster, req.Name)
+	wants, err := m.expandWants(want)
+	if err != nil {
+		return nil, err
 	}
 	var filtered []RecordingCandidate
 	for _, cand := range cands {
-		ok := true
-		for _, req := range want {
-			if !matches(req, cand.Credits) {
-				ok = false
-				break
-			}
-		}
-		if ok {
+		if creditsSatisfy(cand.Credits, wants) {
 			filtered = append(filtered, cand)
 		}
 	}
-	return filtered
+	return filtered, nil
 }
 
 // firstISRC returns the first entry of a "a, b, c" GROUP_CONCAT, or "".
@@ -226,7 +222,10 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		return RecordingResult{}, err
 	}
 
-	cands = filterByCredits(cands, performerCredits(q.Credits))
+	cands, err = m.filterByCredits(cands, performerCredits(q.Credits))
+	if err != nil {
+		return RecordingResult{}, err
+	}
 
 	var warnings []string
 	if len(performerCredits(q.Credits)) == 0 {
