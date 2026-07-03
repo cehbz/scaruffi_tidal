@@ -226,9 +226,21 @@ func (m *MirrorDB) resolveArtistIDForRole(name string, role core.Role) (int64, b
 // nameVariants returns every name the requested artist is known by (primary name
 // + all aliases), always including the queried form itself. Credit matching
 // accepts any variant, so a Latin query matches a Cyrillic-credited artist.
+// Role-less: see nameVariantsForRole for the role-aware form.
 func (m *MirrorDB) nameVariants(name string) ([]string, error) {
+	return m.nameVariantsForRole(name, "")
+}
+
+// nameVariantsForRole is nameVariants with role-aware underlying resolution
+// (resolveArtistIDForRole instead of resolveArtistID): when the caller knows the
+// credit role, a same-FTS-rank ambiguity between artist types (e.g. an ensemble
+// "Trio" vs "Orchestra" tied on bm25) resolves toward the role-compatible type,
+// so the variant set (and therefore credit matching) targets the right artist.
+// role == "" behaves exactly as resolveArtistID (typeRank no-ops on an empty
+// role), so nameVariants above is a thin call-through, not a fork.
+func (m *MirrorDB) nameVariantsForRole(name string, role core.Role) ([]string, error) {
 	out := []string{name}
-	id, ok, err := m.resolveArtistID(name)
+	id, ok, err := m.resolveArtistIDForRole(name, role)
 	if err != nil || !ok {
 		return out, err
 	}

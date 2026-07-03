@@ -55,6 +55,13 @@ type WorkGroup struct {
 	RootName  string
 	Composers []string
 	WorkIDs   []int64
+	// Resolution is the provenance of the winning root: "title" (a title-FTS
+	// candidate produced it — title wins when both title and alias candidates
+	// would have; see resolveWorkGroup step (c)), "alias" (only a
+	// workAliasCandidates id did), or "performer-fallback" (workGroupFromPerformers
+	// produced the group, not title/alias resolution at all). Threaded to
+	// PerformanceResult/RecordingResult as JSON work_resolution.
+	Resolution string
 }
 
 // workGroupLinkParts is l_work_work link_type 281 (parent "has parts" movements).
@@ -118,14 +125,25 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 	if err != nil {
 		return WorkGroup{}, false, err
 	}
+	// candSource tracks each candidate id's origin for WorkGroup.Resolution
+	// ("title" vs "alias"). Title-sourced ids keep their original position ahead
+	// of any newly-appended alias-only id, so step (c) below — which iterates
+	// candidates (via matched) in this same order and stops at the FIRST one
+	// whose climb reaches a childful root — naturally prefers a title candidate
+	// over an alias one whenever both would resolve to the same root: "title
+	// wins when both sources contributed" falls out of iteration order, not a
+	// separate rule.
 	seen := make(map[int64]bool, len(candIDs))
+	candSource := make(map[int64]string, len(candIDs)+len(aliasIDs))
 	for _, id := range candIDs {
 		seen[id] = true
+		candSource[id] = "title"
 	}
 	for _, id := range aliasIDs {
 		if !seen[id] {
 			seen[id] = true
 			candIDs = append(candIDs, id)
+			candSource[id] = "alias"
 		}
 	}
 
@@ -162,6 +180,7 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 	// rank ties between a stub and the true parent can't collapse the group. A genuine
 	// standalone work (no parent, no children) falls back to matched[0].
 	root := matched[0]
+	resolvedFrom := candSource[matched[0]]
 	for _, cand := range matched {
 		r := cand
 		var parent int64
@@ -184,11 +203,17 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		}
 		if childCount > 0 {
 			root = r
+			resolvedFrom = candSource[cand]
 			break
 		}
 	}
 
-	return m.groupByRoot(root)
+	g, ok, err := m.groupByRoot(root)
+	if err != nil || !ok {
+		return g, ok, err
+	}
+	g.Resolution = resolvedFrom
+	return g, true, nil
 }
 
 // workAliasCandidates scans work_alias for aliases whose folded form begins
@@ -398,7 +423,12 @@ func (m *MirrorDB) workGroupFromPerformers(q PerformanceQuery, composer string) 
 					continue
 				}
 			}
-			return m.groupByRoot(root)
+			g, ok, err := m.groupByRoot(root)
+			if err != nil || !ok {
+				return g, ok, err
+			}
+			g.Resolution = "performer-fallback"
+			return g, true, nil
 		}
 	}
 	return WorkGroup{}, false, nil

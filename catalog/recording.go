@@ -37,6 +37,9 @@ type RecordingCandidate struct {
 type RecordingResult struct {
 	Candidates []RecordingCandidate `json:"candidates"`
 	Warnings   []string             `json:"warnings,omitempty"`
+	// WorkResolution is WorkGroup.Resolution ("title"|"alias"|"performer-fallback"),
+	// set only on the --work resolution path (findRecordingsByWork).
+	WorkResolution string `json:"work_resolution,omitempty"`
 }
 
 // FindRecording returns ranked recording candidates (port of mb_mirror recordings_for).
@@ -243,7 +246,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 				q.Work, total, len(cands)))
 		}
 	}
-	return RecordingResult{Candidates: cands, Warnings: warnings}, nil
+	return RecordingResult{Candidates: cands, Warnings: warnings, WorkResolution: g.Resolution}, nil
 }
 
 // intInClause builds a "?,?,?" placeholder list and its args for an IN clause.

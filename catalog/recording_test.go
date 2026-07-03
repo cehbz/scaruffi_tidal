@@ -267,6 +267,20 @@ func TestFindRecordingByWorkUsesWorkGroupNotTop1(t *testing.T) {
 	}
 }
 
+// TestFindRecordingByWorkCarriesWorkResolution: the --work path resolves via
+// resolveWorkGroup exactly like ResolvePerformance does; the same provenance
+// signal (WorkGroup.Resolution) must surface on RecordingResult.
+func TestFindRecordingByWorkCarriesWorkResolution(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.FindRecording(RecordingQuery{Work: "Missa Papae Marcelli", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.WorkResolution != "title" {
+		t.Errorf("WorkResolution = %q, want %q (direct title-FTS match)", res.WorkResolution, "title")
+	}
+}
+
 func TestFindRecordingByWorkWarnsWhenTruncated(t *testing.T) {
 	m := newTestMirror(t)
 	res, err := m.FindRecording(RecordingQuery{Work: "Missa Papae Marcelli", Limit: 2})

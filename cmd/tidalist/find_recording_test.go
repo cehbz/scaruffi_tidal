@@ -57,6 +57,24 @@ func TestFindRecordingCommandByWork(t *testing.T) {
 	}
 }
 
+func TestFindRecordingCommandByWorkSurfacesWorkResolution(t *testing.T) {
+	mb, dc := writeFixtureDBs(t)
+	out, err := runCmd(t, "find-recording", "--work", "Missa Papae Marcelli",
+		"--musicbrainz-db", mb, "--discogs-db", dc)
+	if err != nil {
+		t.Fatalf("execute: %v (out=%s)", err, out)
+	}
+	var got struct {
+		WorkResolution string `json:"work_resolution"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not candidates JSON: %v\n%s", err, out)
+	}
+	if got.WorkResolution != "title" {
+		t.Errorf("work_resolution = %q, want %q\n%s", got.WorkResolution, "title", out)
+	}
+}
+
 func TestFindRecordingCommandRejectsBadCredit(t *testing.T) {
 	mb, dc := writeFixtureDBs(t)
 	_, err := runCmd(t, "find-recording", "--title", "X", "--credit", "bogus:Y",

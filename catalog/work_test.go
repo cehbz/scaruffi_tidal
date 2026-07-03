@@ -42,6 +42,9 @@ func TestResolveWorkGroupNoComposerFilterResolvesSingleWork(t *testing.T) {
 	if !ok || g.RootID != 300 {
 		t.Errorf("resolveWorkGroup = (%+v,%v), want RootID 300, true", g, ok)
 	}
+	if g.Resolution != "title" {
+		t.Errorf("Resolution = %q, want %q (direct title-FTS match, no alias involved)", g.Resolution, "title")
+	}
 }
 
 func TestResolveWorkGroupExpandsMovementsAndDisambiguatesComposer(t *testing.T) {
@@ -148,6 +151,9 @@ func TestResolveWorkGroupRecoversViaWorkAlias(t *testing.T) {
 	if g.RootID != 350 {
 		t.Errorf("root = %d, want 350 (Le Sacre du printemps)", g.RootID)
 	}
+	if g.Resolution != "alias" {
+		t.Errorf("Resolution = %q, want %q (the root has no title-FTS hit; only the movement's work_alias recovered it)", g.Resolution, "alias")
+	}
 }
 
 // TestResolveWorkGroupWorkAliasNeverSubstitutesSibling: the punctuation-free
@@ -169,5 +175,50 @@ func TestResolveWorkGroupWorkAliasNeverSubstitutesSibling(t *testing.T) {
 	}
 	if g.RootID != 353 {
 		t.Errorf("root = %d, want 353 (Matthäus-Passion, BWV 244), never the Johannes sibling", g.RootID)
+	}
+	if g.Resolution != "alias" {
+		t.Errorf("Resolution = %q, want %q (recovered via the movement's work_alias row)", g.Resolution, "alias")
+	}
+}
+
+// TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot pins the "title wins
+// when both sources contribute" ordering guarantee documented on
+// resolveWorkGroup's candSource/matched construction (catalog/work.go): the Kyrie
+// movement (301) carries a work_alias "Missa Papae Marcelli: Kyrie" whose folded
+// form is prefixed by the query title — but 301's own real title ("Kyrie") shares
+// no phrase with the query, so it never enters the title-sourced candidate set;
+// its ONLY route in is the alias. Its 281 parent edge climbs to root 300, the
+// SAME root title-FTS resolves directly for this query — so title and alias
+// candidates genuinely compete for one root, unlike
+// TestResolveWorkGroupRecoversViaWorkAlias / …WorkAliasNeverSubstitutesSibling
+// above, where title-FTS misses the root entirely and alias is the only path in.
+// Title-sourced candidates are kept ahead of newly-appended alias-only ones in
+// iteration order, so the root's title-sourced candidate must win step (c)'s
+// first-childful-root break: Resolution must read "title", never "alias", even
+// though the alias path independently reaches the identical root.
+func TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot(t *testing.T) {
+	m := newTestMirror(t)
+	g, ok, err := m.resolveWorkGroup("Missa Papae Marcelli", "Palestrina")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || g.RootID != 300 {
+		t.Fatalf("resolveWorkGroup = (%+v,%v), want RootID 300, true", g, ok)
+	}
+	if g.Resolution != "title" {
+		t.Errorf("Resolution = %q, want %q (the title-sourced root candidate must win over the alias-sourced Kyrie movement, even though both independently reach root 300)", g.Resolution, "title")
+	}
+	// Sanity: the alias contribution is real — the group must include the Kyrie
+	// movement via its 281 parent edge, proving workAliasCandidates found and
+	// merged it (not merely that the pre-existing single-work resolution still
+	// happens to work unchanged).
+	foundKyrie := false
+	for _, id := range g.WorkIDs {
+		if id == 301 {
+			foundKyrie = true
+		}
+	}
+	if !foundKyrie {
+		t.Errorf("WorkIDs = %v, want the Kyrie movement (301) included via the 281 parent edge", g.WorkIDs)
 	}
 }

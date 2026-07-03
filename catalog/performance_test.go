@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cehbz/tidalist/core"
@@ -465,6 +466,18 @@ func TestResolvePerformanceFallsBackToPerformerWorkGroup(t *testing.T) {
 	if !p.Credits.MatchesRole(core.RoleSoloist, "Glenn Gould") {
 		t.Errorf("matched credits %v missing the Gould soloist credit", p.Credits)
 	}
+	if p.Work.WorkResolution != "performer-fallback" {
+		t.Errorf("Work.WorkResolution = %q, want %q (workGroupFromPerformers produced this group)", p.Work.WorkResolution, "performer-fallback")
+	}
+	foundCrossCheckWarning := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "cross-check") {
+			foundCrossCheckWarning = true
+		}
+	}
+	if !foundCrossCheckWarning {
+		t.Errorf("warnings must mention cross-check on a performer-fallback resolution; got %v", res.Warnings)
+	}
 }
 
 // TestCreditsSatisfyEnsembleUmbrella: an intent-side orchestra/soloist constraint
@@ -536,6 +549,44 @@ func TestResolvePerformanceAliasNamedArtists(t *testing.T) {
 	}
 	if p.FirstYear != 1999 {
 		t.Errorf("first year = %d, want 1999", p.FirstYear)
+	}
+	if p.Work.WorkResolution != "title" {
+		t.Errorf("Work.WorkResolution = %q, want %q (a direct title-FTS hit on the root, no alias needed)", p.Work.WorkResolution, "title")
+	}
+}
+
+// TestExpandWantsIsRoleAware: "Leningrad Philharmonic Trio" (id 70, type Group)
+// and "Leningrad Philharmonic Orchestra" (id 71, type Orchestra) tie on FTS
+// bm25 (see TestResolveArtistIDForRoleOrchestraPrefersOrchestraType); the
+// role-less resolution the pre-fix expandWants used picks the trio regardless
+// of the credit's role. An orchestra credit must expand toward the orchestra's
+// own name, not the trio's, so a recording actually crediting "Leningrad
+// Philharmonic Orchestra" can be matched (and one crediting the trio is not
+// mistaken for a match against an orchestra request).
+func TestExpandWantsIsRoleAware(t *testing.T) {
+	m := newTestMirror(t)
+	got, err := m.expandWants(core.Credits{{Role: core.RoleOrchestra, Name: "Leningrad Philharmonic"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expandWants = %+v, want 1 wantCredit", got)
+	}
+	names := got[0].Names
+	hasOrchestra, hasTrio := false, false
+	for _, n := range names {
+		if n == "Leningrad Philharmonic Orchestra" {
+			hasOrchestra = true
+		}
+		if n == "Leningrad Philharmonic Trio" {
+			hasTrio = true
+		}
+	}
+	if !hasOrchestra {
+		t.Errorf("names = %v, want it to include the orchestra's own name (role-aware resolution)", names)
+	}
+	if hasTrio {
+		t.Errorf("names = %v, must NOT include the trio's name for an orchestra credit", names)
 	}
 }
 

@@ -106,6 +106,22 @@ var mbStmts = []string{
 	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES (1, 1, 30, 300, 0)`, // recording 30 performs work 300
 	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (1, 2, 3, 300, 0)`,     // artist 3 (Palestrina) composes work 300
 	`INSERT INTO isrc (recording, isrc) VALUES (30, 'GBCLASSICAL01')`,
+	// The Kyrie movement (301) of the Palestrina Mass — a real work-group child
+	// linked to the parent (300) via l_work_work 281 parts, with its OWN short
+	// title ("Kyrie") that shares no phrase with the parent's title at all, so
+	// title-FTS on "Missa Papae Marcelli" never surfaces 301 directly. Exists
+	// solely so a work_alias row (added in mbWorkAliasStmts, once the work_alias
+	// table exists) can recover it as a SEPARATE alias-sourced candidate that
+	// independently climbs to the SAME root (300) title-FTS already resolves
+	// directly for that same query — see
+	// TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot, which pins
+	// resolveWorkGroup's "title wins when both sources contribute" ordering
+	// guarantee (the candSource/matched ordering comment in catalog/work.go's
+	// resolveWorkGroup).
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (301, 'work-mpm-kyrie', 'Kyrie', 1, '')`,
+	`INSERT INTO work_fts (rowid, title) VALUES (301, 'Kyrie')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (46, 2, 3, 301, 0)`,  // artist 3 (Palestrina) also composes the Kyrie movement
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES (17, 20, 300, 301, 1)`, // 300 has-part 301 (281 parts; link id 20 defined below)
 	// --- edition tables (slice 2c) ---
 	`CREATE TABLE release_country (release INTEGER, country INTEGER, date_year INTEGER, date_month INTEGER, date_day INTEGER)`,
 	`CREATE TABLE release_unknown_country (release INTEGER PRIMARY KEY, date_year INTEGER, date_month INTEGER, date_day INTEGER)`,
@@ -420,6 +436,17 @@ var mbWorkAliasStmts = []string{
 		(15,20,353,354,1),(16,20,355,356,1)`,
 	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
 		(2,354,'St. Matthew Passion, BWV 244: Part I','en',1)`,
+	// The Kyrie movement (301, seeded in mbStmts) carries an alias whose folded
+	// form is prefixed by the SAME query text ("Missa Papae Marcelli") that
+	// title-FTS ALSO resolves directly to the family root (300) — unlike the
+	// Sacre/Matthäus cases above, where title-FTS misses the root entirely and
+	// alias recovery is the ONLY path in. Here both sources genuinely compete
+	// for the same root: 301's own real title ("Kyrie") never enters the
+	// title-sourced candidate set for this query (no phrase overlap), so its
+	// only route into resolveWorkGroup's candidate list is this alias. See
+	// TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot (catalog/work_test.go).
+	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
+		(3,301,'Missa Papae Marcelli: Kyrie','en',1)`,
 }
 
 // genericTitleFloodTitle is the exact title shared by work 310 (the real Beethoven

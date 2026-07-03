@@ -58,6 +58,11 @@ type WorkRef struct {
 	MBID      core.MBID `json:"mbid,omitempty"`
 	Name      string    `json:"name"`
 	Composers []string  `json:"composers,omitempty"`
+	// WorkResolution is WorkGroup.Resolution ("title"|"alias"|"performer-fallback"),
+	// threaded through for the curate protocol's mandatory cross-check rule (see
+	// CURATE.md) — a performer-fallback resolution can silently land on a
+	// same-composer sibling work.
+	WorkResolution string `json:"work_resolution,omitempty"`
 }
 
 // Performance is a resolved (or candidate) performance: the movement recordings
@@ -126,7 +131,8 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 			}
 			if len(mb) > 0 {
 				fallbackWarnings = append(fallbackWarnings,
-					"work-group "+string(g.RootMBID)+" ("+g.RootName+") had no matching performances; resolved via the performer's discography to "+string(g2.RootMBID)+" ("+g2.RootName+")")
+					"work-group "+string(g.RootMBID)+" ("+g.RootName+") had no matching performances; resolved via the performer's discography to "+string(g2.RootMBID)+" ("+g2.RootName+")",
+					"work resolved via performer-discography fallback; cross-check the work identity (same-composer sibling works can't be discriminated by this path)")
 			}
 		}
 	}
@@ -325,7 +331,7 @@ func (m *MirrorDB) mbPerformances(g WorkGroup, q PerformanceQuery) ([]Performanc
 		years[rgID] = year
 	}
 
-	work := WorkRef{MBID: g.RootMBID, Name: g.RootName, Composers: g.Composers}
+	work := WorkRef{MBID: g.RootMBID, Name: g.RootName, Composers: g.Composers, WorkResolution: g.Resolution}
 	var out []Performance
 	for key, members := range clusters {
 		sort.Slice(members, func(i, j int) bool { return members[i].id < members[j].id })
@@ -395,11 +401,14 @@ func wantsOf(cs core.Credits) []wantCredit {
 	return out
 }
 
-// expandWants lifts credits to alias-expanded wants via the mirror's alias table.
+// expandWants lifts credits to alias-expanded wants via the mirror's alias
+// table, resolved role-aware (nameVariantsForRole): each credit's own role
+// disambiguates same-FTS-rank artist-type ties (e.g. an ensemble "Trio" vs
+// "Orchestra"), so the variant set targets the artist the credit actually means.
 func (m *MirrorDB) expandWants(cs core.Credits) ([]wantCredit, error) {
 	out := make([]wantCredit, 0, len(cs))
 	for _, c := range cs {
-		names, err := m.nameVariants(c.Name)
+		names, err := m.nameVariantsForRole(c.Name, c.Role)
 		if err != nil {
 			return nil, err
 		}

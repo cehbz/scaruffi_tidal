@@ -53,6 +53,9 @@ func newFindRecordingCmd() *cobra.Command {
 			if len(res.Warnings) > 0 {
 				out["warnings"] = res.Warnings
 			}
+			if res.WorkResolution != "" {
+				out["work_resolution"] = res.WorkResolution
+			}
 			return emitJSON(cmd, out)
 		},
 	}
