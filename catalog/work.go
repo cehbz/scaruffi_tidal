@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"database/sql"
+	"strings"
+	"unicode"
 
 	"github.com/cehbz/tidalist/core"
 )
@@ -107,6 +109,26 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		return WorkGroup{}, false, err
 	}
 
+	// work_alias union (BOTH arms of step (a), composer-conditioned or not):
+	// English forms live mostly on movement-level works, not the family root, so a
+	// title-FTS miss on the root still recovers the family via a movement alias —
+	// the alias-sourced ids pass through the same composer filter (b) and root
+	// resolution (c) as the title-FTS candidates, unchanged.
+	aliasIDs, err := m.workAliasCandidates(title)
+	if err != nil {
+		return WorkGroup{}, false, err
+	}
+	seen := make(map[int64]bool, len(candIDs))
+	for _, id := range candIDs {
+		seen[id] = true
+	}
+	for _, id := range aliasIDs {
+		if !seen[id] {
+			seen[id] = true
+			candIDs = append(candIDs, id)
+		}
+	}
+
 	// (b) keep candidates whose composer matches (skip the filter when none
 	// requested). The requested name is expanded to its alias set, so a Latin
 	// query matches a Cyrillic-named composer.
@@ -167,6 +189,64 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 	}
 
 	return m.groupByRoot(root)
+}
+
+// workAliasCandidates scans work_alias for aliases whose folded form begins
+// with the folded query title (strings.HasPrefix over foldWorkTitle). Real
+// mirror aliases carry punctuation the queries lack — e.g. alias "St. Matthew
+// Passion, BWV 244: Part I" vs query "St Matthew Passion" — so the comparison
+// folds punctuation out entirely, not just the core.NormalizeName diacritic/
+// case fold the Go credit matcher uses. A full table scan (158k rows on the
+// mirror) is milliseconds; distinct work ids, capped at 50.
+func (m *MirrorDB) workAliasCandidates(title string) ([]int64, error) {
+	want := foldWorkTitle(title)
+	if want == "" {
+		return nil, nil
+	}
+	rows, err := m.DB.Query(`SELECT work, name FROM work_alias`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[int64]bool{}
+	var out []int64
+	for rows.Next() {
+		var work int64
+		var name string
+		if err := rows.Scan(&work, &name); err != nil {
+			return nil, err
+		}
+		if !strings.HasPrefix(foldWorkTitle(name), want) {
+			continue
+		}
+		if seen[work] {
+			continue
+		}
+		seen[work] = true
+		out = append(out, work)
+		if len(out) >= 50 {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+// foldWorkTitle folds a title for the alias-prefix comparison in
+// workAliasCandidates ONLY: core.NormalizeName(s) (lowercase, diacritic-fold),
+// then strip every rune that is not a letter, digit, or space, then collapse
+// whitespace runs to a single space. This is deliberately scoped here rather
+// than changing core.NormalizeName itself — that function is the credit
+// matcher's fold and has a much wider blast radius across the package.
+func foldWorkTitle(s string) string {
+	folded := core.NormalizeName(s)
+	var b strings.Builder
+	b.Grow(len(folded))
+	for _, r := range folded {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' {
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // workGroupMaxDepth caps the 281 descent/ascent: MB movement hierarchies are
@@ -241,7 +321,7 @@ func (m *MirrorDB) workGroupFromPerformers(q PerformanceQuery, composer string) 
 		}
 	}
 	for _, w := range performerCredits(q.Credits) {
-		aid, ok, err := m.resolveArtistID(w.Name)
+		aid, ok, err := m.resolveArtistIDForRole(w.Name, w.Role)
 		if err != nil {
 			return WorkGroup{}, false, err
 		}
@@ -332,7 +412,7 @@ func (m *MirrorDB) composerIDFor(composer string) (int64, bool, error) {
 	if composer == "" {
 		return 0, false, nil
 	}
-	return m.resolveArtistID(composer)
+	return m.resolveArtistIDForRole(composer, core.RoleComposer)
 }
 
 // composerAmong reports whether any credited composer name matches any requested

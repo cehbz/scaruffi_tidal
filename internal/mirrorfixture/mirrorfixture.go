@@ -20,6 +20,7 @@ func Build(dir string) (mbPath, dcPath string, err error) {
 	all := append(append([]string{}, mbStmts...), mbTwinFamilyStmts...)
 	all = append(all, mbAliasStmts...)
 	all = append(all, mbEnsembleAliasStmts...)
+	all = append(all, mbWorkAliasStmts...)
 	all = append(all, mbGenericTitleFloodStmts()...)
 	if err = exec(mbPath, all); err != nil {
 		return "", "", err
@@ -368,6 +369,57 @@ var mbEnsembleAliasStmts = []string{
 	`INSERT INTO artist (id, gid, name, comment, type) VALUES (70,'a-leningrad-trio','Leningrad Philharmonic Trio','',2)`,
 	`INSERT INTO artist (id, gid, name, comment, type) VALUES (71,'a-leningrad-orch','Leningrad Philharmonic Orchestra','',5)`,
 	`INSERT INTO artist_fts (rowid, name) VALUES (70,'Leningrad Philharmonic Trio'),(71,'Leningrad Philharmonic Orchestra')`,
+}
+
+// mbWorkAliasStmts (Task 2): work_alias candidates in work-group resolution.
+//
+// English work titles live mostly on movement-level MB works, not the family
+// root — work_alias is unioned into resolveWorkGroup's candidate ids so a
+// title-FTS miss on the root still recovers the family via a movement alias +
+// the existing l_work_work 281 parent walk (step c).
+//
+// The Sacre root (350, "Le Sacre du printemps") carries no English alias; the
+// movement (351) does ("The Rite of Spring: Part I: ..."). That movement also
+// gains its own direct composer credit (Stravinsky, artist 65) here: the
+// pre-existing Sacre fixture (mbAliasStmts) credits ONLY the root, which is
+// realistic for some MB works but means an alias-surfaced movement candidate
+// would otherwise fail resolveWorkGroup step (b)'s unmodified composer filter
+// (that filter runs on the raw candidate id, before the step (c) root walk).
+//
+// The Matthäus-Passion, BWV 244 family (root 353 + movement 354, composer Bach
+// 64) and its sibling Johannes-Passion, BWV 245 family (root 355 + movement
+// 356, also composer Bach) are both minimal: root + one movement + a direct
+// composer arc on each. Only the Matthäus movement carries a work_alias row —
+// the real-world REAL-mirror shape, punctuation included: "St. Matthew
+// Passion, BWV 244: Part I". The query "St Matthew Passion" carries no
+// punctuation, so a bare core.NormalizeName prefix comparison would fail on
+// the period after "St" alone; workAliasCandidates instead compares via
+// foldWorkTitle (catalog/work.go), which strips punctuation after the
+// core.NormalizeName fold so the query is still a prefix of the punctuated
+// alias. The Johannes sibling carries NO alias at all — it exists so a query
+// for the Matthäus family can never accidentally resolve to it (same-composer
+// siblings are exactly the case composer arcs alone cannot discriminate).
+var mbWorkAliasStmts = []string{
+	`CREATE TABLE work_alias (id INTEGER PRIMARY KEY, work INTEGER, name TEXT, locale TEXT, type INTEGER)`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (41,2,65,351,0)`,
+	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
+		(1,351,'The Rite of Spring: Part I: Adoration of the Earth','en',1)`,
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(353,'w-matthaus','Matthäus-Passion, BWV 244',1,''),
+		(354,'w-matthaus-p1','Matthäus-Passion, BWV 244: Erster Teil',1,''),
+		(355,'w-johannes','Johannes-Passion, BWV 245',1,''),
+		(356,'w-johannes-p1','Johannes-Passion, BWV 245: Erster Teil',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES
+		(353,'Matthäus-Passion, BWV 244'),
+		(354,'Matthäus-Passion, BWV 244: Erster Teil'),
+		(355,'Johannes-Passion, BWV 245'),
+		(356,'Johannes-Passion, BWV 245: Erster Teil')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES
+		(42,2,64,353,0),(43,2,64,354,0),(44,2,64,355,0),(45,2,64,356,0)`,
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES
+		(15,20,353,354,1),(16,20,355,356,1)`,
+	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
+		(2,354,'St. Matthew Passion, BWV 244: Part I','en',1)`,
 }
 
 // genericTitleFloodTitle is the exact title shared by work 310 (the real Beethoven

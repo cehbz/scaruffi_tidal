@@ -130,3 +130,44 @@ func TestResolveWorkGroupComposerMismatchIsAbsent(t *testing.T) {
 		t.Error("a composer with no matching work must not resolve a group")
 	}
 }
+
+// TestResolveWorkGroupRecoversViaWorkAlias: "The Rite of Spring" is an English
+// title; work_fts only holds the French/Cyrillic-adjacent "Le Sacre du
+// printemps" forms, so title FTS misses entirely. The root (350) carries no
+// English alias — only the movement (351) does — so recovery depends on the
+// work_alias candidate union plus the existing 281-parent walk (step c).
+func TestResolveWorkGroupRecoversViaWorkAlias(t *testing.T) {
+	m := newTestMirror(t)
+	g, ok, err := m.resolveWorkGroup("The Rite of Spring", "Igor Stravinsky")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected the Sacre work-group to resolve via work_alias")
+	}
+	if g.RootID != 350 {
+		t.Errorf("root = %d, want 350 (Le Sacre du printemps)", g.RootID)
+	}
+}
+
+// TestResolveWorkGroupWorkAliasNeverSubstitutesSibling: the punctuation-free
+// query "St Matthew Passion" must still recover the Matthäus-Passion family
+// via its movement's work_alias row, "St. Matthew Passion, BWV 244: Part I" —
+// real mirror aliases carry punctuation queries lack, and the period after
+// "St" breaks a bare core.NormalizeName prefix match (see foldWorkTitle in
+// catalog/work.go). The query must never resolve the same-composer sibling
+// Johannes-Passion family (which carries no alias at all) — the same-
+// composer-sibling case arcs alone cannot discriminate.
+func TestResolveWorkGroupWorkAliasNeverSubstitutesSibling(t *testing.T) {
+	m := newTestMirror(t)
+	g, ok, err := m.resolveWorkGroup("St Matthew Passion", "Johann Sebastian Bach")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected the Matthäus work-group to resolve via work_alias")
+	}
+	if g.RootID != 353 {
+		t.Errorf("root = %d, want 353 (Matthäus-Passion, BWV 244), never the Johannes sibling", g.RootID)
+	}
+}
