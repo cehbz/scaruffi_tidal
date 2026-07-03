@@ -555,6 +555,42 @@ func TestResolvePerformanceAliasNamedArtists(t *testing.T) {
 	}
 }
 
+// TestResolvePerformanceRiteOfSpringSkipsTitleCollisionTrap (live-gate FIX 1,
+// rr-task-5-report.md FINDING 1): the fixture's decoy work 360 ("The Rite of
+// Spring", a childful same-title work by the same composer, zero recordings)
+// wins resolveWorkGroup's single-root, title-source-priority resolution — see
+// TestResolveWorkGroupSingleRootStillHitsTitleCollisionTrap — but carries none
+// of Gergiev's recordings. ResolvePerformance must not stop there: it must try
+// resolveWorkGroups' next candidate (the alias-recovered Sacre family, root
+// 350) and land on it, rather than falling through to the performer-discography
+// fallback (or worse, reporting absent) when a real-but-wrong title match
+// exists ahead of the right one.
+func TestResolvePerformanceRiteOfSpringSkipsTitleCollisionTrap(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.ResolvePerformance(PerformanceQuery{
+		Work: "The Rite of Spring",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Igor Stravinsky"},
+			{Role: core.RoleConductor, Name: "Valery Gergiev"},
+		},
+		MBOnly: true,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome == OutcomeAbsent || len(res.Performances) == 0 {
+		t.Fatalf("must skip past the title-collision decoy onto the Sacre family; outcome=%q warnings=%v", res.Outcome, res.Warnings)
+	}
+	p := res.Performances[0]
+	if p.RGMBID != "rg-sacre-gergiev" {
+		t.Errorf("rg = %q, want rg-sacre-gergiev (the Sacre family, not the decoy)", p.RGMBID)
+	}
+	if p.Work.WorkResolution != "alias" {
+		t.Errorf("Work.WorkResolution = %q, want %q (the decoy's title-FTS hit must be skipped; Sacre is recovered via work_alias)", p.Work.WorkResolution, "alias")
+	}
+}
+
 // TestExpandWantsIsRoleAware: "Leningrad Philharmonic Trio" (id 70, type Group)
 // and "Leningrad Philharmonic Orchestra" (id 71, type Orchestra) tie on FTS
 // bm25 (see TestResolveArtistIDForRoleOrchestraPrefersOrchestraType); the

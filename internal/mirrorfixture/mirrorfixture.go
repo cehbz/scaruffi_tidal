@@ -21,6 +21,8 @@ func Build(dir string) (mbPath, dcPath string, err error) {
 	all = append(all, mbAliasStmts...)
 	all = append(all, mbEnsembleAliasStmts...)
 	all = append(all, mbWorkAliasStmts...)
+	all = append(all, mbRiteTrapStmts...)
+	all = append(all, mbFindRecordingLimitTrapStmts...)
 	all = append(all, mbGenericTitleFloodStmts()...)
 	if err = exec(mbPath, all); err != nil {
 		return "", "", err
@@ -447,6 +449,61 @@ var mbWorkAliasStmts = []string{
 	// TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot (catalog/work_test.go).
 	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
 		(3,301,'Missa Papae Marcelli: Kyrie','en',1)`,
+}
+
+// mbRiteTrapStmts (live-gate FIX 1, rr-task-5-report.md FINDING 1): a genuine,
+// childful, English-titled work "The Rite of Spring" credited to the SAME
+// composer (Stravinsky, artist 65) as the Sacre family above — an unmerged-
+// duplicate MB data quirk, mirroring the real mirror's piano-transcription
+// work (work.id=13213368, "The Rite of Spring", "for piano, Leyetchkiss": same
+// composer, 281 children, zero recordings on the work itself). Unlike the
+// Sacre root (350), this decoy's OWN title is the exact literal query string,
+// so it wins step (a)'s title-FTS arm directly — no alias needed — and its
+// movement child (361) gives it childCount>0, so resolveWorkGroup step (c)'s
+// childful-root heuristic accepts it as a real work-group root. It carries NO
+// recordings anywhere in its family, so mbPerformances on it always returns
+// zero performances regardless of which performers are queried — the trap is
+// that resolveWorkGroup (single-root, title-source-priority) still picks it
+// over the alias-recovered Sacre family; only ResolvePerformance's multi-root
+// retry (resolveWorkGroups) can fall through to Sacre. See
+// TestResolveWorkGroupsOrdersTitleCandidateBeforeAliasRecoveredFamily and
+// TestResolvePerformanceRiteOfSpringSkipsTitleCollisionTrap.
+var mbRiteTrapStmts = []string{
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(360,'w-rite-piano','The Rite of Spring',1,'for piano (decoy transcription — unmerged duplicate)'),
+		(361,'w-rite-piano-i','The Rite of Spring: I. Adoration of the Earth (piano)',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES
+		(360,'The Rite of Spring'),
+		(361,'The Rite of Spring: I. Adoration of the Earth (piano)')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (48,2,65,360,0)`,
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES (18,20,360,361,1)`,
+}
+
+// mbFindRecordingLimitTrapStmts (live-gate FIX 2, rr-task-5-report.md FINDING
+// 2): a two-recording work-group shaped so the credit-matching recording sits
+// outside a Limit-1 SQL window under findRecordingsByWork's `ORDER BY
+// COUNT(i.isrc) DESC, r.id ASC`. Recording 90 (r-limit-a) carries an ISRC
+// (COUNT=1) so it sorts first regardless of --credit; recording 91
+// (r-limit-b) carries none (COUNT=0, sorts second) but is the ONLY one
+// credited to "Limit Conductor". This is the fixture-scale reproduction of the
+// real mirror's Gergiev/"Le Sacre du printemps" case: a top-20-by-ISRC window
+// over a 2412-recording family contained zero of the 19 Gergiev-conducted
+// recordings, because the SQL LIMIT bound before the --credit filter ran.
+var mbFindRecordingLimitTrapStmts = []string{
+	`INSERT INTO work (id, gid, name, type, comment) VALUES (370,'w-limit-trap','Limit Trap Suite',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES (370,'Limit Trap Suite')`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (80,'a-limit-conductor','Limit Conductor','',1)`,
+	`INSERT INTO artist_fts (rowid, name) VALUES (80,'Limit Conductor')`,
+	`INSERT INTO recording (id, gid, name, length, comment, artist_credit) VALUES
+		(90,'r-limit-a','Limit Trap Suite',300000,'',1),
+		(91,'r-limit-b','Limit Trap Suite',300000,'',1)`,
+	`INSERT INTO l_recording_work (id, link, entity0, entity1, link_order) VALUES
+		(40,1,90,370,0),(41,1,91,370,0)`,
+	`INSERT INTO isrc (recording, isrc) VALUES (90,'ZZLIMITTRAP001')`,
+	// recording 91: the ONLY recording conducted by "Limit Conductor" (link 11 =
+	// link_type 151 conductor, reused from mbStmts).
+	`INSERT INTO l_artist_recording (id, link, entity0, entity1, link_order, entity0_credit) VALUES
+		(44,11,80,91,0,'')`,
 }
 
 // genericTitleFloodTitle is the exact title shared by work 310 (the real Beethoven

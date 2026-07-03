@@ -72,7 +72,42 @@ const workGroupLinkParts = 281
 // composerLinkType is l_artist_work link_type 168 (composer).
 const composerLinkType = 168
 
+// resolveWorkGroup resolves the single title-priority work-group root for
+// (title, composer): a thin compatibility wrapper over resolveWorkGroups that
+// returns only its first element. Callers that cannot retry across candidates
+// (e.g. findRecordingsByWork) use this and inherit the title-source-priority
+// behavior, INCLUDING its known trap (see resolveWorkGroups' doc comment) —
+// only ResolvePerformance retries the full candidate list.
 func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, error) {
+	groups, err := m.resolveWorkGroups(title, composer)
+	if err != nil {
+		return WorkGroup{}, false, err
+	}
+	if len(groups) == 0 {
+		return WorkGroup{}, false, nil
+	}
+	return groups[0], true, nil
+}
+
+// resolveWorkGroups resolves the ordered, DISTINCT candidate work-group roots
+// for (title, composer): title-sourced candidates before alias-sourced ones
+// (see candSource below), each candidate collapsed to its childful 281-parent
+// when one exists, deduplicated by root (first occurrence wins, so a root
+// reached by both a title and an alias candidate keeps its title-sourced
+// Resolution — see TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot).
+//
+// MB can hold two distinct, both-real, both-childful works under the
+// IDENTICAL literal title in different scopes — e.g. a concert orchestral
+// work and an unrelated instrument-transcription work both literally titled
+// "The Rite of Spring" (an unmerged-duplicate/alternate-arrangement MB data
+// quirk; see rr-task-5-report.md FINDING 1). A single "best root" resolution
+// silently commits to whichever of them FTS/alias ranked first, even when
+// that candidate has zero of the requested performers' recordings. Returning
+// every distinct root lets ResolvePerformance walk the list and use whichever
+// candidate actually carries matching performances, instead of failing
+// outright (or worse, substituting a real-but-wrong work) when the
+// first-ranked candidate is real but not the one the query means.
+func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error) {
 	// (a) candidate works by title FTS, composer-CONDITIONED when the composer
 	// resolves to a known artist: l_artist_work (168, composer) is joined into
 	// the candidate query itself so the top-25 window is composed of works
@@ -86,7 +121,7 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 	var rows *sql.Rows
 	var err error
 	if composerID, ok, cerr := m.composerIDFor(composer); cerr != nil {
-		return WorkGroup{}, false, cerr
+		return nil, cerr
 	} else if ok {
 		rows, err = m.DB.Query(
 			`SELECT DISTINCT f.rowid
@@ -100,20 +135,20 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 			`SELECT rowid FROM work_fts WHERE work_fts MATCH ? ORDER BY rank LIMIT 25`, ftsTitle(title))
 	}
 	if err != nil {
-		return WorkGroup{}, false, err
+		return nil, err
 	}
 	var candIDs []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return WorkGroup{}, false, err
+			return nil, err
 		}
 		candIDs = append(candIDs, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return WorkGroup{}, false, err
+		return nil, err
 	}
 
 	// work_alias union (BOTH arms of step (a), composer-conditioned or not):
@@ -123,7 +158,7 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 	// resolution (c) as the title-FTS candidates, unchanged.
 	aliasIDs, err := m.workAliasCandidates(title)
 	if err != nil {
-		return WorkGroup{}, false, err
+		return nil, err
 	}
 	// candSource tracks each candidate id's origin for WorkGroup.Resolution
 	// ("title" vs "alias"). Title-sourced ids keep their original position ahead
@@ -154,7 +189,7 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 	if composer != "" {
 		var err error
 		if composerNames, err = m.nameVariants(composer); err != nil {
-			return WorkGroup{}, false, err
+			return nil, err
 		}
 	}
 	var matched []int64
@@ -165,22 +200,31 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		}
 		names, err := m.workComposers(id)
 		if err != nil {
-			return WorkGroup{}, false, err
+			return nil, err
 		}
 		if composerAmong(names, composerNames) {
 			matched = append(matched, id)
 		}
 	}
 	if len(matched) == 0 {
-		return WorkGroup{}, false, nil
+		return nil, nil
 	}
 
-	// (c) resolve the group root. Prefer a matched candidate that resolves to a work
-	// with 281 children (a real work-group) over an arc-less title-twin stub, so FTS
-	// rank ties between a stub and the true parent can't collapse the group. A genuine
-	// standalone work (no parent, no children) falls back to matched[0].
-	root := matched[0]
-	resolvedFrom := candSource[matched[0]]
+	// (c) resolve EVERY matched candidate's root: walk its 281 parent when it has
+	// one, then check for 281 children (a real work-group) vs. an arc-less
+	// title-twin stub — same per-candidate logic as before, just no longer
+	// stopping at the first childful hit. Distinct childful roots are kept in
+	// matched's order (title-sourced candidates precede alias-sourced ones — see
+	// candSource above), first occurrence wins on a duplicate root (the "title
+	// wins when both sources reach the same root" guarantee). When NO candidate
+	// resolves to a childful root, fall back to a single group rooted at
+	// matched[0] itself, unwalked — the pre-existing standalone-work behavior.
+	type rootHit struct {
+		root         int64
+		resolvedFrom string
+	}
+	seenRoot := make(map[int64]bool, len(matched))
+	var roots []rootHit
 	for _, cand := range matched {
 		r := cand
 		var parent int64
@@ -192,28 +236,41 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 		if perr == nil {
 			r = parent
 		} else if perr != sql.ErrNoRows {
-			return WorkGroup{}, false, perr
+			return nil, perr
 		}
 		var childCount int
 		if err := m.DB.QueryRow(
 			`SELECT COUNT(*) FROM l_work_work lww
 			   JOIN link l ON l.id = lww.link
 			  WHERE lww.entity0 = ? AND l.link_type = ?`, r, workGroupLinkParts).Scan(&childCount); err != nil {
-			return WorkGroup{}, false, err
+			return nil, err
 		}
-		if childCount > 0 {
-			root = r
-			resolvedFrom = candSource[cand]
-			break
+		if childCount == 0 || seenRoot[r] {
+			continue
 		}
+		seenRoot[r] = true
+		roots = append(roots, rootHit{root: r, resolvedFrom: candSource[cand]})
+	}
+	if len(roots) == 0 {
+		roots = []rootHit{{root: matched[0], resolvedFrom: candSource[matched[0]]}}
 	}
 
-	g, ok, err := m.groupByRoot(root)
-	if err != nil || !ok {
-		return g, ok, err
+	out := make([]WorkGroup, 0, len(roots))
+	for _, rh := range roots {
+		g, ok, err := m.groupByRoot(rh.root)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		g.Resolution = rh.resolvedFrom
+		out = append(out, g)
 	}
-	g.Resolution = resolvedFrom
-	return g, true, nil
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // workAliasCandidates scans work_alias for aliases whose folded form begins

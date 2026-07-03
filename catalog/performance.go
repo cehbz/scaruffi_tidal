@@ -104,17 +104,31 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 	if names := q.Credits.Names(core.RoleComposer); len(names) > 0 {
 		composer = names[0]
 	}
-	g, ok, err := m.resolveWorkGroup(q.Work, composer)
+	groups, err := m.resolveWorkGroups(q.Work, composer)
 	if err != nil {
 		return PerformanceResult{}, err
 	}
-	if !ok {
+	if len(groups) == 0 {
 		return PerformanceResult{Outcome: OutcomeAbsent}, nil
 	}
 
-	mb, err := m.mbPerformances(g, q)
-	if err != nil {
-		return PerformanceResult{}, err
+	// Multi-root candidacy (see resolveWorkGroups' doc comment / rr-task-5-report.md
+	// FINDING 1): try each candidate root's performances in order — title-sourced
+	// first, then alias-sourced — and use the first one that actually carries a
+	// matching performance. g defaults to the title-priority candidate (groups[0])
+	// so the "no candidate matched at all" path below still blames/reports the same
+	// group it always has when every candidate comes up empty.
+	g := groups[0]
+	var mb []Performance
+	for _, cand := range groups {
+		found, err := m.mbPerformances(cand, q)
+		if err != nil {
+			return PerformanceResult{}, err
+		}
+		if len(found) > 0 {
+			g, mb = cand, found
+			break
+		}
 	}
 	var fallbackWarnings []string
 	if len(mb) == 0 && len(performerCredits(q.Credits)) > 0 {

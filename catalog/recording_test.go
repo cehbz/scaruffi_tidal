@@ -255,6 +255,55 @@ func TestFindRecordingByWorkAliasCreditWrongNameFiltersOut(t *testing.T) {
 	}
 }
 
+// TestFindRecordingByWorkAppliesCreditFilterBeforeLimit (live-gate FIX 2,
+// rr-task-5-report.md FINDING 2): findRecordingsByWork's SQL LIMIT must not
+// bind before the --credit filter runs. Recording 90 (r-limit-a) carries an
+// ISRC, so it sorts first under `ORDER BY COUNT(i.isrc) DESC, r.id ASC`, but
+// carries no matching conductor credit; recording 91 (r-limit-b) carries no
+// ISRC (sorts second) and is the ONLY recording credited to "Limit
+// Conductor". A Limit-1 query must still find it — pre-fix, the SQL LIMIT
+// truncated the candidate set to just recording 90 before filterByCredits
+// ever ran, so the match was silently dropped. This is the fixture-scale
+// reproduction of the real mirror's Gergiev/"Le Sacre du printemps" case: a
+// top-20-by-ISRC window over 2412 recordings held zero of the 19
+// Gergiev-conducted ones.
+func TestFindRecordingByWorkAppliesCreditFilterBeforeLimit(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.FindRecording(RecordingQuery{
+		Work:    "Limit Trap Suite",
+		Credits: core.Credits{{Role: core.RoleConductor, Name: "Limit Conductor"}},
+		Limit:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].MBID != "r-limit-b" {
+		t.Fatalf("the credit filter must run before the SQL LIMIT window; got %+v", res.Candidates)
+	}
+}
+
+// TestFindRecordingNegativeLimitDoesNotPanic (final-review MUST-FIX): a
+// negative Limit reaching findRecordingsByWork's post-credit-filter slice
+// (`cands[:q.Limit]`, recording.go) panics with "slice bounds out of range"
+// because len(cands) > q.Limit is trivially true for any negative q.Limit.
+// FindRecording must default a non-positive Limit the way ResolvePerformance
+// does (performance.go's `if q.Limit <= 0 { q.Limit = 25 }`), applied at the
+// single entry point so both the --work and title paths inherit it.
+func TestFindRecordingNegativeLimitDoesNotPanic(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.FindRecording(RecordingQuery{
+		Work:    "Missa Papae Marcelli",
+		Limit:   -1,
+		Credits: core.Credits{{Role: core.RoleOrchestra, Name: "Tallis Scholars"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].MBID != "r-kyrie" {
+		t.Fatalf("negative Limit should be defaulted, not zero out results; got %+v", res.Candidates)
+	}
+}
+
 func TestFindRecordingByWorkUsesWorkGroupNotTop1(t *testing.T) {
 	m := newTestMirror(t)
 	// The existing Palestrina case still works (single work, no movements).

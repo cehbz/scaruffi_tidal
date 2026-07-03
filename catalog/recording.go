@@ -37,13 +37,18 @@ type RecordingCandidate struct {
 type RecordingResult struct {
 	Candidates []RecordingCandidate `json:"candidates"`
 	Warnings   []string             `json:"warnings,omitempty"`
-	// WorkResolution is WorkGroup.Resolution ("title"|"alias"|"performer-fallback"),
-	// set only on the --work resolution path (findRecordingsByWork).
+	// WorkResolution is WorkGroup.Resolution ("title"|"alias" only — this path
+	// never calls the performer-discography fallback, so "performer-fallback"
+	// cannot appear here), set only on the --work resolution path
+	// (findRecordingsByWork).
 	WorkResolution string `json:"work_resolution,omitempty"`
 }
 
 // FindRecording returns ranked recording candidates (port of mb_mirror recordings_for).
 func (m *MirrorDB) FindRecording(q RecordingQuery) (RecordingResult, error) {
+	if q.Limit <= 0 {
+		q.Limit = 25
+	}
 	if q.Work != "" {
 		return m.findRecordingsByWork(q)
 	}
@@ -186,16 +191,30 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 	}
 	inClause, args := intInClause(g.WorkIDs)
 
-	rows, err := m.DB.Query(
-		`SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
+	// The SQL LIMIT must never bind before the --credit filter: for a work-group
+	// with many more recordings than Limit, the top-Limit-by-ISRC-count window can
+	// easily contain zero of the credit-matching rows even though the full
+	// work-group has plenty (measured on the real mirror: a 2412-recording family
+	// whose top-20 window held none of its 19 conductor-matching recordings — see
+	// rr-task-5-report.md FINDING 2). When credits are requested, fetch every
+	// work-group recording (no SQL LIMIT), filter by credit, THEN cap at Limit;
+	// the SQL-side LIMIT is safe again once there is no --credit filter to starve.
+	hasCredits := len(performerCredits(q.Credits)) > 0
+	query := `SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
 		   FROM l_recording_work lrw
 		   JOIN link l ON l.id = lrw.link
 		   JOIN recording r ON r.id = lrw.entity0
 		   LEFT JOIN isrc i ON i.recording = r.id
-		  WHERE lrw.entity1 IN (`+inClause+`) AND l.link_type = ?
+		  WHERE lrw.entity1 IN (` + inClause + `) AND l.link_type = ?
 		  GROUP BY r.id
-		  ORDER BY COUNT(i.isrc) DESC, r.id ASC
-		  LIMIT ?`, append(append([]any{}, args...), linkTypePerformance, q.Limit)...)
+		  ORDER BY COUNT(i.isrc) DESC, r.id ASC`
+	queryArgs := append(append([]any{}, args...), linkTypePerformance)
+	if !hasCredits {
+		query += `
+		  LIMIT ?`
+		queryArgs = append(queryArgs, q.Limit)
+	}
+	rows, err := m.DB.Query(query, queryArgs...)
 	if err != nil {
 		return RecordingResult{}, err
 	}
@@ -229,9 +248,12 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 	if err != nil {
 		return RecordingResult{}, err
 	}
+	if hasCredits && len(cands) > q.Limit {
+		cands = cands[:q.Limit]
+	}
 
 	var warnings []string
-	if len(performerCredits(q.Credits)) == 0 {
+	if !hasCredits {
 		var total int
 		if err := m.DB.QueryRow(
 			`SELECT COUNT(DISTINCT lrw.entity0) FROM l_recording_work lrw

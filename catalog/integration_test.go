@@ -643,3 +643,144 @@ func TestIntegrationResolvePerformanceDiscogsExtreme(t *testing.T) {
 	}
 	t.Logf("Bernstein/NYPhil confidence counts: %v", confCounts)
 }
+
+// TestIntegrationSingleShotResolution asserts the resolver-refinements gates
+// (docs/superpowers/plans/2026-07-03-resolver-refinements.md Task 5): each
+// e2e friction case from the 2026-07-02 Scaruffi run
+// (docs/superpowers/runs/2026-07-02-scaruffi-e2e/) must now resolve in ONE
+// call — no resolve-artist/resolve-work diagnosis step before a curate agent
+// can accept a result. The classical ResolvePerformance sub-cases below pass
+// MBOnly (per CURATE.md's documented recipe for classical items — Discogs
+// discovery for a prolific composer is minutes-scale and orthogonal to what's
+// under test here: work-group identity, not cross-source corroboration).
+func TestIntegrationSingleShotResolution(t *testing.T) {
+	m := openRealMirror(t)
+
+	// (a) Ensemble alias: "Berlin Philharmonic" (English alias) role-resolves to
+	// the orchestra whose MB primary name is the German "Berliner Philharmoniker"
+	// — not an FTS-shadowing decoy. Pre-fix this required a resolve-artist
+	// diagnosis step (TODO.md, 2026-07-02 e2e curate friction).
+	t.Run("berlin_philharmonic_role_resolution", func(t *testing.T) {
+		start := time.Now()
+		id, ok, err := m.resolveArtistIDForRole("Berlin Philharmonic", core.RoleOrchestra)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatal("expected \"Berlin Philharmonic\" to resolve to an artist")
+		}
+		var name string
+		if err := m.DB.QueryRow(`SELECT name FROM artist WHERE id = ?`, id).Scan(&name); err != nil {
+			t.Fatalf("fetch resolved artist name: %v", err)
+		}
+		if name != "Berliner Philharmoniker" {
+			t.Errorf("resolved artist name = %q, want %q", name, "Berliner Philharmoniker")
+		}
+		t.Logf("Berlin Philharmonic -> artist id=%d name=%q (%s)", id, name, elapsed)
+	})
+
+	// (b) Cyrillic-primary credit through find-recording: the mirror's Валерий
+	// Гергиев is queried by his Latin alias "Valery Gergiev"; the find-recording
+	// --credit filter must be alias-aware (Task 3) to match him at all.
+	t.Run("gergiev_find_recording_conductor_filter", func(t *testing.T) {
+		start := time.Now()
+		got, err := m.FindRecording(RecordingQuery{
+			Work:    "Le Sacre du printemps",
+			Credits: core.Credits{{Role: core.RoleConductor, Name: "Valery Gergiev"}},
+			Limit:   20,
+		})
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Candidates) == 0 {
+			t.Fatal("expected >0 Gergiev-conducted \"Le Sacre du printemps\" recordings via find-recording; got 0")
+		}
+		t.Logf("Gergiev/Sacre find-recording: %d candidates, work_resolution=%q, warnings=%v (%s)",
+			len(got.Candidates), got.WorkResolution, got.Warnings, elapsed)
+	})
+
+	// (c) Cross-language work title: "The Rite of Spring" (English) must resolve
+	// the Sacre family even though the MB root's canonical title is French and
+	// carries no English alias itself — recovery is via a movement-level
+	// work_alias + the 281 walk (Task 2).
+	t.Run("rite_of_spring_resolve_performance", func(t *testing.T) {
+		start := time.Now()
+		res, err := m.ResolvePerformance(PerformanceQuery{
+			Work:   "The Rite of Spring",
+			MBOnly: true,
+			Credits: core.Credits{
+				{Role: core.RoleComposer, Name: "Igor Stravinsky"},
+				{Role: core.RoleConductor, Name: "Valery Gergiev"},
+			},
+			Limit: 25,
+		})
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome == OutcomeAbsent {
+			t.Fatalf("\"The Rite of Spring\"/Stravinsky/Gergiev must resolve in one call; outcome=absent (%s)", elapsed)
+		}
+		if len(res.Performances) == 0 {
+			t.Fatalf("expected at least one performance; outcome=%s (%s)", res.Outcome, elapsed)
+		}
+		p := res.Performances[0]
+		lower := strings.ToLower(p.Work.Name)
+		if !strings.Contains(lower, "sacre") && !strings.Contains(lower, "rite") {
+			t.Errorf("resolved work name = %q, want it to contain %q or %q", p.Work.Name, "Sacre", "Rite")
+		}
+		t.Logf("Rite of Spring/Gergiev: outcome=%s perfs=%d work=%q work_resolution=%q warnings=%v (%s)",
+			res.Outcome, len(res.Performances), p.Work.Name, p.Work.WorkResolution, res.Warnings, elapsed)
+	})
+
+	// (d) Same-composer sibling non-substitution: "St Matthew Passion" (English,
+	// no dot — the CURATE.md documented friction case) + Bach + Harnoncourt must
+	// never SILENTLY land on the Johannes-Passion sibling. Landing on Johannes
+	// while flagged performer-fallback (or with the matching warning) is
+	// acceptable — the mandatory cross-check in CURATE.md exists for exactly
+	// that case; a silent, unflagged Johannes result is the failure.
+	t.Run("st_matthew_passion_never_silently_johannes", func(t *testing.T) {
+		start := time.Now()
+		res, err := m.ResolvePerformance(PerformanceQuery{
+			Work:   "St Matthew Passion",
+			MBOnly: true,
+			Credits: core.Credits{
+				{Role: core.RoleComposer, Name: "Johann Sebastian Bach"},
+				{Role: core.RoleConductor, Name: "Nikolaus Harnoncourt"},
+			},
+			Limit: 25,
+		})
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome == OutcomeAbsent {
+			t.Fatalf("St Matthew Passion/Bach/Harnoncourt must resolve in one call; outcome=absent (%s)", elapsed)
+		}
+		if len(res.Performances) == 0 {
+			t.Fatalf("expected at least one performance; outcome=%s (%s)", res.Outcome, elapsed)
+		}
+		p := res.Performances[0]
+		isJohannes := strings.Contains(p.Work.Name, "Johannes")
+		flaggedFallback := p.Work.WorkResolution == "performer-fallback"
+		for _, w := range res.Warnings {
+			if strings.Contains(w, "performer-discography fallback") {
+				flaggedFallback = true
+			}
+		}
+		if isJohannes && !flaggedFallback {
+			t.Fatalf("SILENT sibling substitution: resolved work %q (Johannes-Passion) with no performer-fallback flag; work_resolution=%q warnings=%v",
+				p.Work.Name, p.Work.WorkResolution, res.Warnings)
+		}
+		t.Logf("St Matthew Passion/Harnoncourt: outcome=%s perfs=%d work=%q work_resolution=%q johannes=%v flaggedFallback=%v warnings=%v (%s)",
+			res.Outcome, len(res.Performances), p.Work.Name, p.Work.WorkResolution, isJohannes, flaggedFallback, res.Warnings, elapsed)
+	})
+
+	// (e) Regression: the pre-existing Kleiber/VPO federated gate (composer +
+	// conductor + orchestra, cross-source High, <60s) must still pass under
+	// this task's changes — run it as a subtest here rather than duplicate its
+	// assertions.
+	t.Run("kleiber_vpo_federated_regression", TestIntegrationResolvePerformanceDiscogsInteractive)
+}

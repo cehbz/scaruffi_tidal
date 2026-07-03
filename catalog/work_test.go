@@ -134,25 +134,57 @@ func TestResolveWorkGroupComposerMismatchIsAbsent(t *testing.T) {
 	}
 }
 
-// TestResolveWorkGroupRecoversViaWorkAlias: "The Rite of Spring" is an English
-// title; work_fts only holds the French/Cyrillic-adjacent "Le Sacre du
-// printemps" forms, so title FTS misses entirely. The root (350) carries no
-// English alias — only the movement (351) does — so recovery depends on the
-// work_alias candidate union plus the existing 281-parent walk (step c).
-func TestResolveWorkGroupRecoversViaWorkAlias(t *testing.T) {
+// TestResolveWorkGroupsOrdersTitleCandidateBeforeAliasRecoveredFamily
+// (live-gate FIX 1, rr-task-5-report.md FINDING 1): the fixture's decoy work
+// 360 is a genuine, childful work literally titled "The Rite of Spring" and
+// credited to the SAME composer (Stravinsky) as the Sacre family — mirroring
+// the real mirror's unmerged piano-transcription duplicate. Unlike the Sacre
+// root (350), which carries no English alias and is recovered only via the
+// movement's (351) work_alias row, the decoy's own title IS the query, so it
+// wins step (a)'s title-FTS arm directly and is childful (its own movement,
+// 361) — resolveWorkGroups must surface it FIRST (title-sourced) and the
+// alias-recovered Sacre family SECOND, never silently dropping Sacre from the
+// candidate list just because a real-but-wrong title match ranked ahead of it.
+func TestResolveWorkGroupsOrdersTitleCandidateBeforeAliasRecoveredFamily(t *testing.T) {
+	m := newTestMirror(t)
+	groups, err := m.resolveWorkGroups("The Rite of Spring", "Igor Stravinsky")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("resolveWorkGroups = %+v, want 2 candidates (decoy 360, then Sacre 350)", groups)
+	}
+	if groups[0].RootID != 360 || groups[0].Resolution != "title" {
+		t.Errorf("groups[0] = %+v, want RootID 360 (the title-collision decoy), Resolution %q", groups[0], "title")
+	}
+	if groups[1].RootID != 350 || groups[1].Resolution != "alias" {
+		t.Errorf("groups[1] = %+v, want RootID 350 (Le Sacre du printemps), Resolution %q", groups[1], "alias")
+	}
+}
+
+// TestResolveWorkGroupSingleRootStillHitsTitleCollisionTrap documents the
+// deliberate scope boundary of the FIX 1 design (rr-task-5-report.md FINDING
+// 1): resolveWorkGroup (singular) is a thin compatibility wrapper that only
+// ever returns resolveWorkGroups' FIRST candidate, so a caller that cannot
+// retry (e.g. findRecordingsByWork) is still vulnerable to the exact
+// title-collision trap this fixture models — it resolves to the decoy
+// work 360, not the Sacre family, even though Sacre is the family the
+// English query actually means. Only ResolvePerformance retries the full
+// candidate list (see TestResolvePerformanceRiteOfSpringSkipsTitleCollisionTrap).
+func TestResolveWorkGroupSingleRootStillHitsTitleCollisionTrap(t *testing.T) {
 	m := newTestMirror(t)
 	g, ok, err := m.resolveWorkGroup("The Rite of Spring", "Igor Stravinsky")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok {
-		t.Fatal("expected the Sacre work-group to resolve via work_alias")
+		t.Fatal("expected a work-group to resolve (the decoy, per title-source priority)")
 	}
-	if g.RootID != 350 {
-		t.Errorf("root = %d, want 350 (Le Sacre du printemps)", g.RootID)
+	if g.RootID != 360 {
+		t.Errorf("root = %d, want 360 (the known title-collision trap; resolveWorkGroup does not retry)", g.RootID)
 	}
-	if g.Resolution != "alias" {
-		t.Errorf("Resolution = %q, want %q (the root has no title-FTS hit; only the movement's work_alias recovered it)", g.Resolution, "alias")
+	if g.Resolution != "title" {
+		t.Errorf("Resolution = %q, want %q", g.Resolution, "title")
 	}
 }
 
