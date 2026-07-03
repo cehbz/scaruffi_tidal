@@ -118,11 +118,10 @@ func (m *MirrorDB) findAlbumDiscogs(q AlbumQuery) ([]AlbumCandidate, error) {
 		}
 		c.Styles = styles
 		var n int
-		// CROSS JOIN pins the join order so the release (master_id=?) drives via
-		// idx_release_master, then tracks via idx_track_release. Without it the
-		// planner mis-estimates `parent_track_id IS NULL` as selective and drives
-		// from idx_track_parent — effectively a full scan of every parent-less
-		// track on the real mirror (~6m43s per candidate vs ~0.1s with the hint).
+		// CROSS JOIN pins the join order (release drives via idx_release_master,
+		// tracks via idx_track_release) against the same idx_track_parent stat1
+		// skew documented at tracksFor (performance.go): IS NULL costs as selective
+		// with or without stats (~6m43s per candidate vs ~0.1s).
 		if err := m.DB.QueryRow(
 			`SELECT COUNT(*) FROM dc.release r
 			   CROSS JOIN dc.track t ON t.release_id = r.id

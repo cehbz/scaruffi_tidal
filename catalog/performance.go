@@ -597,8 +597,11 @@ type dcCredit struct {
 // tracksFor returns the top-level tracks of each release, seq-ordered — one query.
 func (m *MirrorDB) tracksFor(releaseIDs []int64) (map[int64][]dcTrack, error) {
 	in, args := intInClause(releaseIDs)
-	// +parent_track_id: bare IS NULL lures the planner onto NULL-heavy idx_track_parent
-	// (~120M-row walk; no sqlite_stat1 on the mirror); the unary + pins idx_track_release.
+	// +parent_track_id disqualifies idx_track_parent (SQLite's documented unary-+
+	// mechanism). Its NULL bucket (~120M of 178M rows) is inexpressible in stat1's
+	// single per-index average (any ANALYZE records ~4-13 rows/key), so with or
+	// without stats the planner costs IS NULL as selective and walks the index
+	// (~6 min for 16 releases). Guarded by the integration latency tests.
 	rows, err := m.DB.Query(
 		`SELECT release_id, id, title FROM dc.track
 		  WHERE release_id IN (`+in+`) AND +parent_track_id IS NULL
