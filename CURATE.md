@@ -36,8 +36,9 @@ tidalist resolve-performance --mb-only \
 `--mb-only` skips Discogs discovery (minutes-scale for a prolific composer); curate
 never needs Discogs cross-source High, only the MB spine. But the MB-only path never
 reconciles a `discogs_master_id` — when the pick needs Discogs corroboration or
-edition identity, re-run without `--mb-only` (interactive: ~6-10s) or use
-`find-album`.
+edition identity, re-run without `--mb-only` (interactive: ~6-10s for a typical
+performer-anchored query, e.g. Kleiber/VPO ~10s live — a prolific composer's
+federated path can still run minutes-scale, same as above) or use `find-album`.
 
 ### 2. Non-classical album items
 
@@ -149,12 +150,15 @@ attempts, not just say "not found".
 signal lives at different JSON paths and covers different value sets — don't conflate
 them:
 
-- **`resolve-performance`**: each entry in `performances[]` carries
-  `performances[].work.work_resolution`: `"title"`, `"alias"`, or
-  `"performer-fallback"`. On the fallback path the result also appends a matching
-  top-level `warnings[]` entry ("work resolved via performer-discography fallback;
-  cross-check the work identity…") — key on either the per-performance field or the
-  warning text, whichever is easier to check.
+- **`resolve-performance`**: each **MB-sourced** entry in `performances[]` (i.e.
+  `sources` includes `"musicbrainz"`) carries `performances[].work.work_resolution`:
+  `"title"`, `"alias"`, or `"performer-fallback"`. On the fallback path the result
+  also appends a matching top-level `warnings[]` entry ("work resolved via
+  performer-discography fallback; cross-check the work identity…") — key on either
+  the per-performance field or the warning text, whichever is easier to check. A
+  federated run's Discogs-only `ConfidenceLow` entries carry no MB work identity at
+  all (`work` is empty) and so omit `work_resolution` entirely — its **absence** on
+  those entries is not a fallback signal, just no MB side to report.
 - **`find-recording --work`**: the signal is a single top-level `work_resolution`
   field, values `"title"` or `"alias"` **only**. This path never calls the
   performer-discography fallback, so `"performer-fallback"` cannot appear here —
