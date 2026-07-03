@@ -19,6 +19,7 @@ func Build(dir string) (mbPath, dcPath string, err error) {
 	dcPath = filepath.Join(dir, "dc.db")
 	all := append(append([]string{}, mbStmts...), mbTwinFamilyStmts...)
 	all = append(all, mbAliasStmts...)
+	all = append(all, mbEnsembleAliasStmts...)
 	all = append(all, mbGenericTitleFloodStmts()...)
 	if err = exec(mbPath, all); err != nil {
 		return "", "", err
@@ -340,6 +341,33 @@ var mbAliasStmts = []string{
 	`INSERT INTO medium (id, release, position, format, track_count) VALUES (713,513,1,2,1)`,
 	`INSERT INTO track (id, gid, recording, medium, position, number, name, length) VALUES
 		(850,'t-sacre',63,713,1,'1','Le Sacre du printemps',2040000)`,
+}
+
+// mbEnsembleAliasStmts (Task 1): role-aware artist resolution over merged
+// FTS+alias candidates.
+//
+// Berliner Philharmoniker (68, type 5 Orchestra) carries the artist_alias
+// "Berlin Philharmonic" — its German primary name shares no tokens with that
+// query at all, so an FTS search for "Berlin Philharmonic" never returns it. A
+// decoy "Berlin Philharmonic Wind Quintet" (69, type 2 Group) is the literal FTS
+// top hit (the phrase is a substring of its name) and must NOT win: alias-exact
+// outranks any FTS rank.
+//
+// "Leningrad Philharmonic Trio" (70, type 2 Group) and "Leningrad Philharmonic
+// Orchestra" (71, type 5 Orchestra) tie on FTS bm25 — same query-term frequency,
+// same document length (3 tokens each) — so the lower rowid (70, the trio) wins
+// the tie-break (ascending-rowid tie-break verified empirically, see
+// mbGenericTitleFloodStmts). Neither carries an alias, so this pair isolates
+// role-specific type preference: an orchestra credit must promote 71 past the
+// FTS-favored trio; a soloist credit has no reason to and must leave 70 in place.
+var mbEnsembleAliasStmts = []string{
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (68,'a-berliner-phil','Berliner Philharmoniker','',5)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (69,'a-berlin-phil-quintet','Berlin Philharmonic Wind Quintet','',2)`,
+	`INSERT INTO artist_fts (rowid, name) VALUES (68,'Berliner Philharmoniker'),(69,'Berlin Philharmonic Wind Quintet')`,
+	`INSERT INTO artist_alias (id, artist, name, locale, type) VALUES (5,68,'Berlin Philharmonic','en',1)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (70,'a-leningrad-trio','Leningrad Philharmonic Trio','',2)`,
+	`INSERT INTO artist (id, gid, name, comment, type) VALUES (71,'a-leningrad-orch','Leningrad Philharmonic Orchestra','',5)`,
+	`INSERT INTO artist_fts (rowid, name) VALUES (70,'Leningrad Philharmonic Trio'),(71,'Leningrad Philharmonic Orchestra')`,
 }
 
 // genericTitleFloodTitle is the exact title shared by work 310 (the real Beethoven
