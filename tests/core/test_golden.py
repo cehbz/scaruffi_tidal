@@ -268,3 +268,36 @@ def test_golden_entry_edition_is_none_when_candidate_has_no_edition():
     curator = Curator(FakeMetadataProvider(albums={"John Barleycorn Must Die": alb}))
     golden = curator.curate(_brief(), [candidate])
     assert golden.entries[0].edition is None
+
+
+# --- Task A2-Py: credit variants round-trip ---
+
+def test_golden_roundtrips_credit_variants():
+    from tidalist.core.spec import to_golden, from_golden
+    from tidalist.core.recording import Credit
+    from tidalist.core.album import Album
+    from tidalist.core.golden import GoldenPlaylist, GoldenEntry
+    from tidalist.core.brief import Brief
+    from tidalist.core.criteria import Verdict
+    from tidalist.core.provenance import Provenance
+
+    album = Album(artist="Валерий Гергиев", title="Le Sacre du printemps",
+                  credits=(Credit("Валерий Гергиев", "conductor", ("Valery Gergiev",)),))
+    gp = GoldenPlaylist("t", Brief("t", ()),
+                        (GoldenEntry(album, Provenance("nl"), Verdict(True, ())),))
+    data = to_golden(gp)
+    assert data["entries"][0]["credits"][0]["variants"] == ["Valery Gergiev"]
+    back = from_golden(data)
+    assert back.entries[0].item.credits[0].variants == ("Valery Gergiev",)
+
+
+def test_golden_without_variants_loads_backcompat():
+    from tidalist.core.spec import from_golden
+    data = {"name": "t", "brief": {"criteria": []}, "entries": [{
+        "kind": "album", "artist": "Traffic", "title": "John Barleycorn Must Die",
+        "traits": [], "tracklist": [],
+        "credits": [{"artist": "Traffic", "role": "artist"}],
+        "provenance": {"source": "nl", "note": ""},
+        "verdict": {"admitted": True, "violations": []}}]}
+    album = from_golden(data).entries[0].item
+    assert album.credits[0].variants == ()

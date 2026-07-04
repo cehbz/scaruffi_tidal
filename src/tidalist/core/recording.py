@@ -32,6 +32,7 @@ class Kind(StrEnum):
 class Credit:
     artist: str
     role: str  # "performer", "vocals", "guitar", "composer", ...
+    variants: tuple[str, ...] = ()  # Latin alias forms materialized at curate time
 
 
 @dataclass(frozen=True, slots=True)

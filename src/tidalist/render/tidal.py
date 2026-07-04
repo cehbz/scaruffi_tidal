@@ -9,7 +9,7 @@ import unicodedata
 
 from ..core.ports import Platform
 from ..core.identifiers import TrackId
-from ..core.recording import Recording, Performance
+from ..core.recording import Recording, Performance, Credit
 from ..core.catalog import Track
 from ..core.render import PlatformItem, MatchQuality, AlbumResolution
 from ..core.fidelity import (
@@ -165,6 +165,19 @@ def _strip_leading_the(s: str) -> str:
 _ANCHOR_ROLE_PRIORITY = {"conductor": 0, "orchestra": 1, "chorus": 1, "artist": 2}
 
 
+def _credit_forms(credit: Credit) -> tuple[str, ...]:
+    """A credit's own name plus its materialized Latin variants (GM `variants`),
+    deduped case-insensitively, order-preserving."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for form in (credit.artist, *credit.variants):
+        f = form.strip()
+        if f and f.casefold() not in seen:
+            seen.add(f.casefold())
+            out.append(f)
+    return tuple(out)
+
+
 def _anchor_queries(album: Album):
     """Yield de-duplicated search queries for album, from most to least specific.
 
@@ -176,7 +189,8 @@ def _anchor_queries(album: Album):
         (c for c in album.credits if c.role in _ANCHOR_ROLE_PRIORITY),
         key=lambda c: _ANCHOR_ROLE_PRIORITY[c.role],
     )
-    candidates = [f"{c.artist} {album.title}" for c in ranked_credits]
+    candidates = [f"{form} {album.title}"
+                  for c in ranked_credits for form in _credit_forms(c)]
     candidates += [
         f"{album.artist} {album.title}",
         f"{_strip_leading_the(album.artist)} {album.title}",
@@ -198,10 +212,13 @@ def _norm(s: str | None) -> str:
 
 
 def _artist_match_album(album: Album, catalog_artists: tuple[str, ...]) -> bool:
-    """A candidate matches when the compound album.artist matches (either direction,
-    casefolded) OR any credit name does the same — a candidate credited to just the
-    orchestra/conductor still counts as the same album."""
-    names = (album.artist, *(c.artist for c in album.credits))
+    """A candidate matches when the compound album.artist, any credit name, or any
+    materialized credit variant substring-matches a catalog artist (folded, either
+    direction) — a candidate credited to just the orchestra/conductor (in any of its
+    known name forms) still counts as the same album."""
+    names = [album.artist]
+    for c in album.credits:
+        names.extend(_credit_forms(c))
     return any(_name_in_catalog(name, catalog_artists) for name in names)
 
 

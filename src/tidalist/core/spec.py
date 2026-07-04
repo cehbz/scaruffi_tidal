@@ -116,6 +116,17 @@ def _trackref_to_dict(t: TrackRef) -> dict:
             "mbid": t.mbid, "duration_s": t.duration_s}
 
 
+def _credit_to_dict(c: Credit) -> dict:
+    d = {"artist": c.artist, "role": c.role}
+    if c.variants:
+        d["variants"] = list(c.variants)
+    return d
+
+
+def _credit_from_dict(d: dict) -> Credit:
+    return Credit(d["artist"], d["role"], tuple(d.get("variants", ())))
+
+
 def _trackref_from_dict(d: dict) -> TrackRef:
     return TrackRef(
         position=d["position"],
@@ -150,7 +161,7 @@ def _golden_entry_to_dict(e: GoldenEntry) -> dict:
         if a.styles:
             d["styles"] = sorted(a.styles)
         if a.credits:
-            d["credits"] = [{"artist": c.artist, "role": c.role} for c in a.credits]
+            d["credits"] = [_credit_to_dict(c) for c in a.credits]
         return {**d, **prov_verdict}
     r = e.item
     return {
@@ -158,7 +169,7 @@ def _golden_entry_to_dict(e: GoldenEntry) -> dict:
         "mbid": r.mbid, "isrc": r.isrc, "artist": r.artist, "title": r.title,
         "album": r.album, "year": r.first_released, "duration_s": r.duration_s,
         "performance": r.performance.value,
-        "credits": [{"artist": c.artist, "role": c.role} for c in r.credits],
+        "credits": [_credit_to_dict(c) for c in r.credits],
         **prov_verdict,
     }
 
@@ -181,14 +192,14 @@ def _golden_entry_from_dict(d: dict) -> GoldenEntry:
                      traits=frozenset(ReleaseTrait(t) for t in d.get("traits", [])),
                      styles=frozenset(d.get("styles", [])),
                      tracklist=tuple(_trackref_from_dict(t) for t in d.get("tracklist", [])),
-                     credits=tuple(Credit(c["artist"], c["role"]) for c in d.get("credits", [])))
+                     credits=tuple(_credit_from_dict(c) for c in d.get("credits", [])))
     else:
         item = Recording(
             artist=d["artist"], title=d["title"], mbid=_mbid(d.get("mbid")),
             isrc=_isrc(d.get("isrc")), album=d.get("album"),
             first_released=d.get("year"), duration_s=d.get("duration_s"),
             performance=Performance(d["performance"]),
-            credits=tuple(Credit(c["artist"], c["role"]) for c in d.get("credits", [])))
+            credits=tuple(_credit_from_dict(c) for c in d.get("credits", [])))
     return GoldenEntry(item, provenance, verdict, edition=edition)
 
 

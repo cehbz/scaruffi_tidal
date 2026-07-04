@@ -401,3 +401,20 @@ def test_title_match_folds_curly_double_quotes():
 def test_title_match_folds_diacritics_casefold():
     # Diacritics should be stripped and casefolded
     assert _title_match_album('Le Divin Poème', "le divin poeme") is True
+
+
+# --- Task A2-Py: credit-variant expansion ---
+
+def test_anchor_query_expands_per_credit_variant():
+    from tidalist.render.tidal import _anchor_queries
+    album = Album(artist="Кирилл Петренко", title="Symphony No. 7",
+                  credits=(Credit("Кирилл Петренко", "conductor", ("Kirill Petrenko",)),))
+    queries = list(_anchor_queries(album))
+    assert "Kirill Petrenko Symphony No. 7" in queries
+
+
+def test_survivor_matches_via_credit_variant():
+    from tidalist.render.tidal import _artist_match_album
+    album = Album(artist="Кирилл Петренко", title="Symphony No. 7",
+                  credits=(Credit("Кирилл Петренко", "conductor", ("Kirill Petrenko",)),))
+    assert _artist_match_album(album, ("Kirill Petrenko",)) is True
