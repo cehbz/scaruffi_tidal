@@ -432,6 +432,40 @@ func TestIntegrationAlbumEditionsDiscogs(t *testing.T) {
 	}
 }
 
+// TestIntegrationFindByAttributes is the live latency gate for the
+// find-by-attributes style/genre/year discovery tool (Task 7): a style+year
+// query with no title/artist hint must return candidates and complete well
+// within an interactive budget, driving off dc.master_style (never a full
+// dc.master scan — see the EXPLAIN QUERY PLAN check recorded in the task
+// report).
+func TestIntegrationFindByAttributes(t *testing.T) {
+	m := openRealMirror(t)
+	start := time.Now()
+	got, err := m.FindByAttributes(AttributeQuery{
+		Styles:   []string{"Krautrock"},
+		YearFrom: 1970,
+		YearTo:   1979,
+		Limit:    25,
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected at least one Krautrock candidate (1970-1979)")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("interactive budget blown: %s > 10s", elapsed)
+	}
+	for i, c := range got {
+		if i >= 5 {
+			break
+		}
+		t.Logf("candidate[%d]: %q by %q (%d)", i, c.Title, c.Artist, c.Year)
+	}
+	t.Logf("Krautrock 1970-1979: %d candidates in %s", len(got), elapsed)
+}
+
 // composersContain reports whether any composer name folds to contain want (normalized).
 func composersContain(cs []string, want string) bool {
 	w := core.NormalizeName(want)

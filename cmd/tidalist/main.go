@@ -23,6 +23,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newResolvePerformanceCmd())
 	root.AddCommand(newFindRecordingCmd())
 	root.AddCommand(newFindAlbumCmd())
+	root.AddCommand(newFindByAttributesCmd())
 	root.AddCommand(newTracklistCmd())
 	root.AddCommand(newAlbumEditionsCmd())
 	root.AddCommand(newLintIntentCmd())

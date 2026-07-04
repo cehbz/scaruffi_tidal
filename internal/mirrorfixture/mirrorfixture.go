@@ -644,4 +644,20 @@ var dcStmts = []string{
 		(2,141,952,'Composed By','extraartist')`,
 	`INSERT INTO release_artist (id, release_id, seq, artist_id, role, kind) VALUES
 		(9,60002,4,952,'Composed By','artist')`,
+	// --- attribute discovery (Task 7): styled masters for FindByAttributes ---
+	// Master 69017 (JBMD) gains two additional styles (Psychedelic Rock, Classic
+	// Rock) alongside its existing Folk Rock/Blues Rock, so a single-style query
+	// hits it without a decoy and a two-style AND query can also target it.
+	// Master 70000 (Beethoven Symphony No. 5, TAKE A) gains a Classical genre.
+	// Master 70003 is a new minimal master (Gothic Rock / Electronic, 1984) —
+	// 70001/70002 are already taken by the performance fixtures above — giving
+	// FindByAttributes a candidate with NO overlap with the Rock-genre masters,
+	// for AND-across-styles-returns-empty and year-window tests.
+	`INSERT INTO master_style (master_id, seq, style) VALUES (69017, 3, 'Psychedelic Rock'), (69017, 4, 'Classic Rock')`,
+	`INSERT INTO master_genre (master_id, seq, genre) VALUES (70000, 1, 'Classical')`,
+	`INSERT INTO master (id, main_release_id, title, year) VALUES (70003, NULL, 'Nightshade', 1984)`,
+	`INSERT INTO master_genre (master_id, seq, genre) VALUES (70003, 1, 'Electronic')`,
+	`INSERT INTO master_style (master_id, seq, style) VALUES (70003, 1, 'Gothic Rock')`,
+	`INSERT INTO artist (id, name) VALUES (960, 'Bleak Moon')`,
+	`INSERT INTO master_artist (master_id, seq, artist_id) VALUES (70003, 1, 960)`,
 }
