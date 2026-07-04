@@ -287,3 +287,116 @@ def test_main_diff_with_report_includes_curate_context(tmp_path, capsys):
                   "--existing", str(existing_path), "--report", str(report_path)])
     out = capsys.readouterr().out
     assert rc == 0 and "## Curate-report context" in out
+
+
+# --- sync verb -----------------------------------------------------------------
+# One rendering entry matches an existing track (id "1"); one resolves to a new track
+# ref ("3") absent from the existing playlist -> that's the addition. The existing
+# playlist's "Paper Sun" (id "2") is claimed by no entry -> that's the unclaimed/removal
+# candidate.
+
+def _sync_rendering_records():
+    return [
+        {"index": 0, "golden": {"title": "Glad", "artist": "Traffic", "note": ""},
+         "items": [{"ref": "1", "title": "Glad", "artists": ["Traffic"], "isrc": None, "quality": "isrc"}],
+         "gap": False},
+        {"index": 1, "golden": {"title": "Feelin Alright", "artist": "Traffic", "note": ""},
+         "items": [{"ref": "3", "title": "Feelin Alright", "artists": ["Traffic"], "isrc": None, "quality": "weak"}],
+         "gap": False},
+    ]
+
+
+def _write_sync_rendering_jsonl(tmp_path):
+    path = tmp_path / "sync-rendering.jsonl"
+    lines = [json.dumps(r) for r in _sync_rendering_records()]
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _sync_existing_snapshot():
+    return [
+        {"id": "1", "title": "Glad", "isrc": None, "artist": "Traffic", "album": "Mr Fantasy"},
+        {"id": "2", "title": "Paper Sun", "isrc": None, "artist": "Traffic", "album": "Traffic"},
+    ]
+
+
+def _refusing_platform_factory(cfg):
+    raise AssertionError("platform_factory must not be invoked: dry-run must not touch the platform")
+
+
+def test_main_sync_dry_run_prints_plan_and_never_touches_platform(tmp_path, capsys):
+    rendering_path = _write_sync_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_sync_existing_snapshot()))
+    rc = cli.main(["sync", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path)],
+                  platform_factory=_refusing_platform_factory)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DRY RUN — no platform changes; re-run with --apply to execute" in out
+    assert "# Sync plan: PL1" in out
+    assert "- additions: 1" in out
+    assert "- removals: 0" in out  # no --prune: removals stay empty
+
+
+def test_main_sync_dry_run_without_existing_only_reads_playlist_tracks(tmp_path, capsys):
+    rendering_path = _write_sync_rendering_jsonl(tmp_path)
+    existing = _tracks_from_snapshot_for_test(_sync_existing_snapshot())
+    platform = FakePlatform([], playlist_tracks_map={"PL1": existing})
+    rc = cli.main(["sync", str(rendering_path), "--playlist-id", "PL1"],
+                  config_loader=lambda path=None: _cfg(tmp_path),
+                  platform_factory=lambda cfg: platform)
+    assert rc == 0
+    assert [name for name, _ in platform.calls] == ["playlist_tracks"]
+
+
+def test_main_sync_dry_run_with_prune_shows_removals_but_makes_no_calls(tmp_path, capsys):
+    rendering_path = _write_sync_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_sync_existing_snapshot()))
+    rc = cli.main(["sync", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path), "--prune"],
+                  platform_factory=_refusing_platform_factory)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DRY RUN" in out  # --prune alone is still a dry run
+    assert "- removals: 1" in out
+    assert "Paper Sun" not in out  # sync's plan lists track ids, not titles — id "2" instead
+    assert "2" in out
+
+
+def test_main_sync_apply_calls_add_tracks_and_never_remove_without_prune(tmp_path, capsys):
+    rendering_path = _write_sync_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_sync_existing_snapshot()))
+    platform = FakePlatform([])
+    platform.playlists["PL1"] = []
+    rc = cli.main(["sync", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path), "--apply"],
+                  config_loader=lambda path=None: _cfg(tmp_path),
+                  platform_factory=lambda cfg: platform)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DRY RUN" not in out  # --apply runs must not carry the dry-run banner
+    assert "applied." in out
+    assert platform.playlists["PL1"] == ["3"]
+    assert not any(name == "remove_tracks" for name, _ in platform.calls)
+
+
+def test_main_sync_apply_and_prune_calls_both_add_and_remove_tracks(tmp_path, capsys):
+    rendering_path = _write_sync_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_sync_existing_snapshot()))
+    platform = FakePlatform([])
+    platform.playlists["PL1"] = []
+    rc = cli.main(["sync", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path), "--apply", "--prune"],
+                  config_loader=lambda path=None: _cfg(tmp_path),
+                  platform_factory=lambda cfg: platform)
+    assert rc == 0
+    assert platform.playlists["PL1"] == ["3"]
+    assert ("remove_tracks", ("PL1", ["2"])) in platform.calls
+
+
+def _tracks_from_snapshot_for_test(data):
+    return cli._tracks_from_snapshot(data)

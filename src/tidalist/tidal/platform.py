@@ -78,6 +78,17 @@ class TidalPlatform:
     def add_tracks(self, playlist: PlaylistId, tracks: list[TrackId]) -> None:
         self._session.playlist(playlist).add([str(t) for t in tracks])
 
+    def remove_tracks(self, playlist: PlaylistId, tracks: list[TrackId]) -> None:
+        # An empty removal set must not touch the wire: tidalapi's delete_by_id([])
+        # still fetches the full track list and issues a DELETE request.
+        if not tracks:
+            return
+        # UserPlaylist.remove_by_id removes one media id per call, re-fetching the full
+        # track list every time to find its index. UserPlaylist.delete_by_id takes the
+        # whole id list, does that tracks() read once, and issues a single indices-based
+        # DELETE — the only sane choice when prune runs can touch 1000+ tracks.
+        self._session.playlist(playlist).delete_by_id([str(t) for t in tracks])
+
     def search_albums(self, query: str, limit: int = 25) -> list[PlatformAlbum]:
         clamped = _clamp_query(query)
         results = _retry_5xx(lambda: self._session.search(clamped, models=[tidalapi.album.Album], limit=limit))

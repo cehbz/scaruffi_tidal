@@ -28,11 +28,15 @@ class _FakeUser:
 class _FakePlaylist:
     def __init__(self, tracks=()):
         self.added = []
+        self.deleted = []
         self._tracks = list(tracks)
         self.track_calls: list[tuple[int, int]] = []
 
     def add(self, ids):
         self.added.append(ids)
+
+    def delete_by_id(self, media_ids):
+        self.deleted.append(media_ids)
 
     def tracks(self, limit=None, offset=0):
         self.track_calls.append((limit, offset))
@@ -199,6 +203,26 @@ def test_add_tracks_passes_string_ids():
     session = _FakeSession()
     TidalPlatform(session).add_tracks("PL1", ["1", "2"])
     assert session.pl.added == [["1", "2"]]
+
+
+# --- remove_tracks ---
+
+def test_remove_tracks_passes_string_media_ids_to_delete_by_id():
+    """UserPlaylist.delete_by_id takes a list of media ids and removes them in one
+    request (it maps ids -> indices internally via one tracks() read); prefer it over
+    looping remove_by_id (which re-fetches tracks per call) since prune runs can touch
+    over a thousand tracks in one go."""
+    session = _FakeSession()
+    TidalPlatform(session).remove_tracks("PL1", ["50", "51"])
+    assert session.pl.deleted == [["50", "51"]]
+
+
+def test_remove_tracks_empty_list_makes_no_platform_call():
+    """Real tidalapi delete_by_id([]) still fetches the track list and issues a DELETE;
+    an empty removal set must short-circuit before touching the wire."""
+    session = _FakeSession()
+    TidalPlatform(session).remove_tracks("PL1", [])
+    assert session.pl.deleted == []
 
 
 # --- playlist_tracks ---

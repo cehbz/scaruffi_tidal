@@ -20,44 +20,61 @@ class FakePlatform:
         self._playlist_tracks_map: dict[str, list[Track]] = dict(playlist_tracks_map or {})
         self.playlists: dict[str, list] = {}
         self._n = 0
+        # Call log for tests that assert on platform-touching behavior (e.g. sync's
+        # dry-run-by-default and prune gating): a list of (method_name, args) tuples,
+        # one per port call made against this fake.
+        self.calls: list[tuple] = []
 
     @staticmethod
     def _haystack(t: Track) -> str:
         return f"{t.title} {' '.join(t.artists)} {t.album or ''}".casefold()
 
     def search_tracks(self, query: str, limit: int = 25) -> list[Track]:
+        self.calls.append(("search_tracks", (query, limit)))
         words = query.casefold().split()
         return [t for t in self._tracks
                 if all(w in self._haystack(t) for w in words)][:limit]
 
     def track_by_isrc(self, isrc):
+        self.calls.append(("track_by_isrc", (isrc,)))
         return next((t for t in self._tracks if t.isrc == isrc), None)
 
     def create_playlist(self, name: str, description: str = "") -> PlaylistId:
+        self.calls.append(("create_playlist", (name, description)))
         self._n += 1
         pid = PlaylistId(f"pl-{self._n}")
         self.playlists[pid] = []
         return pid
 
     def add_tracks(self, playlist, tracks) -> None:
+        self.calls.append(("add_tracks", (playlist, list(tracks))))
         self.playlists[playlist].extend(tracks)
+
+    def remove_tracks(self, playlist, tracks) -> None:
+        self.calls.append(("remove_tracks", (playlist, list(tracks))))
+        remaining = [t for t in self.playlists.get(playlist, []) if str(t) not in {str(x) for x in tracks}]
+        self.playlists[playlist] = remaining
 
     @staticmethod
     def _album_haystack(a: PlatformAlbum) -> str:
         return f"{a.title} {' '.join(a.artists)}".casefold()
 
     def search_albums(self, query: str, limit: int = 25) -> list[PlatformAlbum]:
+        self.calls.append(("search_albums", (query, limit)))
         words = query.casefold().split()
         return [a for a in self._albums
                 if all(w in self._album_haystack(a) for w in words)][:limit]
 
     def album_tracks(self, album_id: TrackId) -> list[Track]:
+        self.calls.append(("album_tracks", (album_id,)))
         return list(self._album_track_map.get(str(album_id), []))
 
     def album_editions(self, album_id: TrackId) -> list[PlatformAlbum]:
+        self.calls.append(("album_editions", (album_id,)))
         return list(self._album_editions_map.get(str(album_id), []))
 
     def playlist_tracks(self, playlist) -> list[Track]:
+        self.calls.append(("playlist_tracks", (playlist,)))
         return list(self._playlist_tracks_map.get(str(playlist), []))
 
 

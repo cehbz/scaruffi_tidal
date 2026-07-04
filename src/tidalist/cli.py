@@ -1,10 +1,11 @@
 """tidalist CLI: curate a golden playlist, review it, render and publish to a platform.
 
-Presentation only — the domain use cases (curate, render, publish, diff) live in core.
-Verbs operate on files: `curate` turns an intent JSON into a golden JSON; `review` prints
-it; `render` resolves it onto the platform (no write); `publish` creates the playlist;
-`diff` compares a rendering against an existing platform playlist; `run` chains
-curate → render → publish.
+Presentation only — the domain use cases (curate, render, publish, diff, sync) live in
+core. Verbs operate on files: `curate` turns an intent JSON into a golden JSON; `review`
+prints it; `render` resolves it onto the platform (no write); `publish` creates the
+playlist; `diff` compares a rendering against an existing platform playlist; `sync`
+reconciles a rendering into an existing playlist (additive, dry-run by default); `run`
+chains curate → render → publish.
 """
 
 import argparse
@@ -18,6 +19,7 @@ from .core.diff import PlaylistDelta, delta_to_dict, diff_playlist, format_delta
 from .core.golden import Curator
 from .core.render import render, publish, Rendering
 from .core.spec import to_golden, from_golden
+from .core.sync import apply_sync, format_plan, plan_sync
 from .nl.intent import parse_intent
 
 
@@ -163,6 +165,27 @@ def main(argv=None, *, config_loader=AppConfig.load,
                 json.dumps(delta_to_dict(delta), indent=2, ensure_ascii=False))
         return 0
 
+    if args.command == "sync":
+        rendering_records = _read_jsonl(args.rendering)
+        report = _read_json(args.report) if args.report else None
+        if args.existing:
+            existing = _tracks_from_snapshot(_read_json(args.existing))
+            platform = None
+        else:
+            existing = None
+            platform = platform_factory(config_loader(args.config))
+        delta = diff_rendering(rendering_records, platform, args.playlist_id, existing, report)
+        plan = plan_sync(delta, args.playlist_id, prune=args.prune)
+        print(format_plan(plan, applied=args.apply), file=out)
+        if args.apply:
+            # Dry-run is the default: only build/authenticate the platform adapter (and
+            # only ever write to it) once the caller has explicitly opted in with --apply.
+            if platform is None:
+                platform = platform_factory(config_loader(args.config))
+            apply_sync(plan, platform)
+            print("applied.", file=out)
+        return 0
+
     if args.command == "run":
         config = config_loader(args.config)
         golden = curate_golden(_read_json(args.intent), metadata_factory(config))
@@ -204,6 +227,19 @@ def _parser() -> argparse.ArgumentParser:
     df.add_argument("--report", default=None, help="curate-report JSON for additional context")
     df.add_argument("--json", dest="json_out", default=None,
                     help="write the delta JSON artifact here")
+
+    sy = sub.add_parser("sync", help="reconcile a rendering into an existing platform "
+                                     "playlist (additive, dry-run by default)")
+    sy.add_argument("rendering", help="rendering JSONL path (from `render_dump.py`)")
+    sy.add_argument("--playlist-id", required=True, help="existing platform playlist id to sync into")
+    sy.add_argument("--existing", default=None,
+                    help="existing-playlist snapshot JSON (bypasses the live fetch)")
+    sy.add_argument("--report", default=None, help="curate-report JSON for additional context")
+    sy.add_argument("--prune", action="store_true",
+                    help="also plan removal of existing tracks no rendered entry claims "
+                         "(only takes effect together with --apply)")
+    sy.add_argument("--apply", action="store_true",
+                    help="execute the plan (default is a dry-run report with zero platform writes)")
 
     run = sub.add_parser("run", help="curate → render → publish in one go")
     run.add_argument("intent", help="intent JSON path (or - for stdin)")
