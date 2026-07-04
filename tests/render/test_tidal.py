@@ -324,6 +324,67 @@ def test_resolve_album_no_tracklist_gaps():
     assert gap_reason == "no-edition-matched: tried 2 anchor queries, 0 survivors"
 
 
+# --- Task A6: gate track-fallback assembly on verified (ISRC/STRONG) matches only ---
+
+def test_assemble_rejects_weak_only_matches():
+    """Every candidate the search turns up is a title mismatch (WEAK grade); none of
+    them may fill a slot, so the whole album is a gap, not a false 'assembled' match."""
+    golden = Album(artist="Tavener", title="Akathist of Thanksgiving",
+                   tracklist=(_track_ref(1, "Introit"), _track_ref(2, "Doxology")))
+    t1 = _album_track("T1", "Introit (Alternate Take)", artists=("Tavener",))
+    t2 = _album_track("T2", "Doxology Reprise", artists=("Tavener",))
+    cat = FakePlatform([t1, t2], albums=[])
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
+    assert items == []
+    assert gap_reason == "track-fallback: 0/2 tracks found"
+
+
+def test_assemble_dedups_repeated_refs():
+    """Two tracklist positions whose searches both land on the SAME catalog track must
+    not both be filled by it — the second occurrence counts as missing."""
+    golden = Album(artist="Grisey", title="Partiels / Derives",
+                   tracklist=(_track_ref(1, "Preface"), _track_ref(2, "Preface")))
+    t1 = _album_track("T1", "Preface", artists=("Grisey",))
+    cat = FakePlatform([t1], albums=[])
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
+    assert [i.ref for i in items] == ["T1"]
+    assert len(comps) == 1 and comps[0].facet == "album-source"
+    assert "assembled 1/2" in comps[0].note
+    assert "missing positions: 2" in comps[0].note
+    assert gap_reason is None
+
+
+def test_assemble_mixed_strong_and_weak():
+    """Position 1 resolves STRONG and fills its slot; position 2 only turns up a WEAK
+    title mismatch and must be reported missing, not silently filled."""
+    golden = Album(artist="Tavener", title="Akathist of Thanksgiving",
+                   tracklist=(_track_ref(1, "Movement One"), _track_ref(2, "Movement Two")))
+    t1 = _album_track("T1", "Movement One", artists=("Tavener",))
+    t2 = _album_track("T2", "Movement Two Alternate Version", artists=("Tavener",))
+    cat = FakePlatform([t1, t2], albums=[])
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
+    assert [i.ref for i in items] == ["T1"]
+    assert len(comps) == 1 and comps[0].facet == "album-source"
+    assert "assembled 1/2" in comps[0].note
+    assert "missing positions: 2" in comps[0].note
+    assert gap_reason is None
+
+
+def test_assemble_isrc_match_fills_slot():
+    """An ISRC-path hit is a verified identity match (not a fuzzy fold/artist grade) and
+    must still fill its slot even though the title text is wildly different."""
+    golden = Album(artist="X", title="Y",
+                   tracklist=(_track_ref(1, "Some Title", isrc=ISRC("XX1")),))
+    t1 = _track("T1", title="Completely Different Title", artists=("Someone Else",),
+                isrc=ISRC("XX1"))
+    cat = FakePlatform([t1], albums=[])
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
+    assert [i.ref for i in items] == ["T1"]
+    assert items[0].quality is MatchQuality.ISRC
+    assert len(comps) == 1 and "assembled 1/1" in comps[0].note
+    assert gap_reason is None
+
+
 # --- Task 3: credit-anchored search + any-credit survivor match + gap reasons ---
 
 class _QuerySpyPlatform(FakePlatform):

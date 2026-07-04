@@ -81,10 +81,16 @@ class TidalRenderer:
             )
         items: list[PlatformItem] = []
         missing: list[int] = []
+        seen_refs: set[str] = set()
         for tr in album.tracklist:
             item, _ = self.resolve(_recording_from_trackref(album, tr))
-            if item is not None:
+            # A WEAK grade is a low-confidence guess, not a verified match; letting it
+            # (or a ref that already filled an earlier slot) fill a slot here is exactly
+            # the false-substitution failure mode this fallback must never produce —
+            # a reported gap beats a wrong track.
+            if item is not None and item.quality is not MatchQuality.WEAK and item.ref not in seen_refs:
                 items.append(item)
+                seen_refs.add(item.ref)
             else:
                 missing.append(tr.position)
         if not items:
