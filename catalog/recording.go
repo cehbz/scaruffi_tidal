@@ -177,18 +177,51 @@ func firstISRC(concat string) string {
 	return strings.SplitN(concat, ", ", 2)[0]
 }
 
+// findRecordingsByWork resolves --work to its work-group's recordings.
+// Multi-root candidacy (see resolveWorkGroups' doc comment / rr-task-5-report.md
+// FINDING 1): a title-FTS collision can resolve to a childful-but-empty decoy
+// root before the alias-recovered family that actually carries the requested
+// recordings — try each candidate root's recording query in order and use the
+// first one that actually yields a candidate, the same retry
+// ResolvePerformance already does across mbPerformances. The top-level
+// WorkResolution reflects the WINNING root's Resolution, not necessarily
+// groups[0]'s.
 func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, error) {
 	composer := ""
 	if names := q.Credits.Names(core.RoleComposer); len(names) > 0 {
 		composer = names[0]
 	}
-	g, ok, err := m.resolveWorkGroup(q.Work, composer)
+	groups, groupWarnings, err := m.resolveWorkGroups(q.Work, composer)
 	if err != nil {
 		return RecordingResult{}, err
 	}
-	if !ok {
-		return RecordingResult{}, nil // unresolved work → no candidates
+	if len(groups) == 0 {
+		return RecordingResult{Warnings: groupWarnings}, nil // unresolved work → no candidates
 	}
+
+	hasCredits := len(performerCredits(q.Credits)) > 0
+	for _, g := range groups {
+		cands, warnings, err := m.recordingsForGroup(g, q, hasCredits)
+		if err != nil {
+			return RecordingResult{}, err
+		}
+		if len(cands) > 0 {
+			return RecordingResult{
+				Candidates:     cands,
+				Warnings:       append(groupWarnings, warnings...),
+				WorkResolution: g.Resolution,
+			}, nil
+		}
+	}
+	// No candidate root's recording query yielded anything: report the
+	// title-priority group's resolution, mirroring the pre-multi-root
+	// single-candidate-miss behavior.
+	return RecordingResult{Warnings: groupWarnings, WorkResolution: groups[0].Resolution}, nil
+}
+
+// recordingsForGroup runs the work-group recording query (+ --credit filter, +
+// over-limit warning) for a single candidate root.
+func (m *MirrorDB) recordingsForGroup(g WorkGroup, q RecordingQuery, hasCredits bool) ([]RecordingCandidate, []string, error) {
 	inClause, args := intInClause(g.WorkIDs)
 
 	// The SQL LIMIT must never bind before the --credit filter: for a work-group
@@ -199,7 +232,6 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 	// rr-task-5-report.md FINDING 2). When credits are requested, fetch every
 	// work-group recording (no SQL LIMIT), filter by credit, THEN cap at Limit;
 	// the SQL-side LIMIT is safe again once there is no --credit filter to starve.
-	hasCredits := len(performerCredits(q.Credits)) > 0
 	query := `SELECT r.id, r.gid, r.name, r.length, GROUP_CONCAT(i.isrc, ', ') AS isrcs
 		   FROM l_recording_work lrw
 		   JOIN link l ON l.id = lrw.link
@@ -216,7 +248,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 	}
 	rows, err := m.DB.Query(query, queryArgs...)
 	if err != nil {
-		return RecordingResult{}, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
@@ -227,7 +259,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		var length sql.NullInt64
 		var isrcs sql.NullString
 		if err := rows.Scan(&id, &gid, &name, &length, &isrcs); err != nil {
-			return RecordingResult{}, err
+			return nil, nil, err
 		}
 		c := RecordingCandidate{MBID: core.MBID(gid), ISRC: core.ISRC(firstISRC(isrcs.String)), Title: name, Match: Match{}}
 		if length.Valid {
@@ -235,18 +267,18 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 		}
 		credits, err := m.recordingCredits(id)
 		if err != nil {
-			return RecordingResult{}, err
+			return nil, nil, err
 		}
 		c.Credits = credits
 		cands = append(cands, c)
 	}
 	if err := rows.Err(); err != nil {
-		return RecordingResult{}, err
+		return nil, nil, err
 	}
 
 	cands, err = m.filterByCredits(cands, performerCredits(q.Credits))
 	if err != nil {
-		return RecordingResult{}, err
+		return nil, nil, err
 	}
 	if hasCredits && len(cands) > q.Limit {
 		cands = cands[:q.Limit]
@@ -260,7 +292,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 			   JOIN link l ON l.id = lrw.link
 			  WHERE lrw.entity1 IN (`+inClause+`) AND l.link_type = ?`,
 			append(append([]any{}, args...), linkTypePerformance)...).Scan(&total); err != nil {
-			return RecordingResult{}, err
+			return nil, nil, err
 		}
 		if total > q.Limit {
 			warnings = append(warnings, fmt.Sprintf(
@@ -268,7 +300,7 @@ func (m *MirrorDB) findRecordingsByWork(q RecordingQuery) (RecordingResult, erro
 				q.Work, total, len(cands)))
 		}
 	}
-	return RecordingResult{Candidates: cands, Warnings: warnings, WorkResolution: g.Resolution}, nil
+	return cands, warnings, nil
 }
 
 // intInClause builds a "?,?,?" placeholder list and its args for an IN clause.

@@ -255,6 +255,36 @@ func TestFindRecordingByWorkAliasCreditWrongNameFiltersOut(t *testing.T) {
 	}
 }
 
+// TestFindRecordingRetriesMultipleRootsPastTitleCollisionTrap (Task 2c;
+// rewrite/rename of the former TestResolveWorkGroupSingleRootStillHitsTitleCollisionTrap,
+// which pinned the OLD single-root behavior): the fixture's decoy work 360
+// ("The Rite of Spring", childful, same composer as the Sacre family, zero
+// recordings anywhere in its family — see mbRiteTrapStmts) wins step (a)'s
+// title-FTS arm directly and is resolveWorkGroups' FIRST candidate.
+// findRecordingsByWork must not stop there: it must retry the alias-recovered
+// Sacre family (root 350, SECOND candidate) and find recording 63
+// (r-sacre-gergiev), the same multi-root retry ResolvePerformance already
+// does (see TestResolvePerformanceRiteOfSpringSkipsTitleCollisionTrap).
+func TestFindRecordingRetriesMultipleRootsPastTitleCollisionTrap(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.FindRecording(RecordingQuery{
+		Work: "The Rite of Spring", Limit: 10,
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Igor Stravinsky"},
+			{Role: core.RoleConductor, Name: "Valery Gergiev"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].MBID != "r-sacre-gergiev" {
+		t.Fatalf("must retry past the title-collision decoy (360) onto the alias-recovered Sacre family; got %+v", res.Candidates)
+	}
+	if res.WorkResolution != "alias" {
+		t.Errorf("WorkResolution = %q, want %q (the winning root, 350, was alias-recovered)", res.WorkResolution, "alias")
+	}
+}
+
 // TestFindRecordingByWorkAppliesCreditFilterBeforeLimit (live-gate FIX 2,
 // rr-task-5-report.md FINDING 2): findRecordingsByWork's SQL LIMIT must not
 // bind before the --credit filter runs. Recording 90 (r-limit-a) carries an

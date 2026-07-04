@@ -392,7 +392,7 @@ var mbEnsembleAliasStmts = []string{
 // mbWorkAliasStmts (Task 2): work_alias candidates in work-group resolution.
 //
 // English work titles live mostly on movement-level MB works, not the family
-// root — work_alias is unioned into resolveWorkGroup's candidate ids so a
+// root — work_alias is unioned into resolveWorkGroups's candidate ids so a
 // title-FTS miss on the root still recovers the family via a movement alias +
 // the existing l_work_work 281 parent walk (step c).
 //
@@ -401,7 +401,7 @@ var mbEnsembleAliasStmts = []string{
 // gains its own direct composer credit (Stravinsky, artist 65) here: the
 // pre-existing Sacre fixture (mbAliasStmts) credits ONLY the root, which is
 // realistic for some MB works but means an alias-surfaced movement candidate
-// would otherwise fail resolveWorkGroup step (b)'s unmodified composer filter
+// would otherwise fail resolveWorkGroups step (b)'s unmodified composer filter
 // (that filter runs on the raw candidate id, before the step (c) root walk).
 //
 // The Matthäus-Passion, BWV 244 family (root 353 + movement 354, composer Bach
@@ -417,6 +417,17 @@ var mbEnsembleAliasStmts = []string{
 // alias. The Johannes sibling carries NO alias at all — it exists so a query
 // for the Matthäus family can never accidentally resolve to it (same-composer
 // siblings are exactly the case composer arcs alone cannot discriminate).
+//
+// A THIRD level (357, "Matthäus-Passion, BWV 244: Teil I: Nr. 1") hangs off
+// 354 via its own 281 parts edge, with its own work_alias row and its own
+// direct composer arc (same reason 351/354 need one — the alias-surfaced
+// candidate must independently clear step (b)'s composer filter). This models
+// a real MB movement hierarchy (work → part → movement) and is Task 2b's
+// transitive-ascent fixture: an alias hit on 357 must climb PAST the
+// mid-level part 354 (itself alias-hit and now childful, thanks to 357) all
+// the way to root 353 — a one-level parent walk stops at 354 and wrongly
+// surfaces it as a second, spurious root. See
+// TestResolveWorkGroupsAscendsPastMidLevelPartToMatthausRoot.
 var mbWorkAliasStmts = []string{
 	`CREATE TABLE work_alias (id INTEGER PRIMARY KEY, work INTEGER, name TEXT, locale TEXT, type INTEGER)`,
 	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (41,2,65,351,0)`,
@@ -438,6 +449,16 @@ var mbWorkAliasStmts = []string{
 		(15,20,353,354,1),(16,20,355,356,1)`,
 	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
 		(2,354,'St. Matthew Passion, BWV 244: Part I','en',1)`,
+	// Third level: 357 is a 281-child of 354 (mid-level part), carries its own
+	// work_alias + composer arc.
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(357,'w-matthaus-p1-n1','Matthäus-Passion, BWV 244: Teil I: Nr. 1',1,'')`,
+	`INSERT INTO work_fts (rowid, title) VALUES
+		(357,'Matthäus-Passion, BWV 244: Teil I: Nr. 1')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (49,2,64,357,0)`,
+	`INSERT INTO l_work_work (id, link, entity0, entity1, link_order) VALUES (19,20,354,357,1)`,
+	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
+		(4,357,'St. Matthew Passion, BWV 244: Part I, No. 1','en',1)`,
 	// The Kyrie movement (301, seeded in mbStmts) carries an alias whose folded
 	// form is prefixed by the SAME query text ("Missa Papae Marcelli") that
 	// title-FTS ALSO resolves directly to the family root (300) — unlike the

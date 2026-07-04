@@ -104,12 +104,12 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 	if names := q.Credits.Names(core.RoleComposer); len(names) > 0 {
 		composer = names[0]
 	}
-	groups, err := m.resolveWorkGroups(q.Work, composer)
+	groups, groupWarnings, err := m.resolveWorkGroups(q.Work, composer)
 	if err != nil {
 		return PerformanceResult{}, err
 	}
 	if len(groups) == 0 {
-		return PerformanceResult{Outcome: OutcomeAbsent}, nil
+		return PerformanceResult{Outcome: OutcomeAbsent, Warnings: groupWarnings}, nil
 	}
 
 	// Multi-root candidacy (see resolveWorkGroups' doc comment / rr-task-5-report.md
@@ -157,7 +157,7 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 		}
 	}
 	perfs, warnings, err := m.reconcile(mb, dc, q)
-	warnings = append(fallbackWarnings, warnings...)
+	warnings = append(append(append([]string{}, groupWarnings...), fallbackWarnings...), warnings...)
 	if err != nil {
 		return PerformanceResult{}, err
 	}

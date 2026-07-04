@@ -147,7 +147,7 @@ func TestResolveWorkGroupComposerMismatchIsAbsent(t *testing.T) {
 // candidate list just because a real-but-wrong title match ranked ahead of it.
 func TestResolveWorkGroupsOrdersTitleCandidateBeforeAliasRecoveredFamily(t *testing.T) {
 	m := newTestMirror(t)
-	groups, err := m.resolveWorkGroups("The Rite of Spring", "Igor Stravinsky")
+	groups, _, err := m.resolveWorkGroups("The Rite of Spring", "Igor Stravinsky")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,32 +159,6 @@ func TestResolveWorkGroupsOrdersTitleCandidateBeforeAliasRecoveredFamily(t *test
 	}
 	if groups[1].RootID != 350 || groups[1].Resolution != "alias" {
 		t.Errorf("groups[1] = %+v, want RootID 350 (Le Sacre du printemps), Resolution %q", groups[1], "alias")
-	}
-}
-
-// TestResolveWorkGroupSingleRootStillHitsTitleCollisionTrap documents the
-// deliberate scope boundary of the FIX 1 design (rr-task-5-report.md FINDING
-// 1): resolveWorkGroup (singular) is a thin compatibility wrapper that only
-// ever returns resolveWorkGroups' FIRST candidate, so a caller that cannot
-// retry (e.g. findRecordingsByWork) is still vulnerable to the exact
-// title-collision trap this fixture models — it resolves to the decoy
-// work 360, not the Sacre family, even though Sacre is the family the
-// English query actually means. Only ResolvePerformance retries the full
-// candidate list (see TestResolvePerformanceRiteOfSpringSkipsTitleCollisionTrap).
-func TestResolveWorkGroupSingleRootStillHitsTitleCollisionTrap(t *testing.T) {
-	m := newTestMirror(t)
-	g, ok, err := m.resolveWorkGroup("The Rite of Spring", "Igor Stravinsky")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("expected a work-group to resolve (the decoy, per title-source priority)")
-	}
-	if g.RootID != 360 {
-		t.Errorf("root = %d, want 360 (the known title-collision trap; resolveWorkGroup does not retry)", g.RootID)
-	}
-	if g.Resolution != "title" {
-		t.Errorf("Resolution = %q, want %q", g.Resolution, "title")
 	}
 }
 
@@ -210,6 +184,30 @@ func TestResolveWorkGroupWorkAliasNeverSubstitutesSibling(t *testing.T) {
 	}
 	if g.Resolution != "alias" {
 		t.Errorf("Resolution = %q, want %q (recovered via the movement's work_alias row)", g.Resolution, "alias")
+	}
+}
+
+// TestResolveWorkGroupsAscendsPastMidLevelPartToMatthausRoot (Task 2b): the
+// fixture's third Matthäus level (357, a 281-child of the mid-level part 354)
+// carries its own work_alias row, so workAliasCandidates surfaces BOTH 354 and
+// 357 as alias-sourced candidates for "St Matthew Passion". 357's alias hit
+// gives 354 a child of its own — childCount(354) > 0 — so a one-level-only
+// parent walk from 357 stops AT 354 and wrongly reports it as a second,
+// standalone root (354 is reachable as an alias hit's one-hop parent, and is
+// now childful). resolveWorkGroups must climb TRANSITIVELY past 354 to the
+// true family root (353) instead, so both alias hits (354's own, and 357's)
+// collapse to the SAME single root.
+func TestResolveWorkGroupsAscendsPastMidLevelPartToMatthausRoot(t *testing.T) {
+	m := newTestMirror(t)
+	groups, _, err := m.resolveWorkGroups("St Matthew Passion", "Johann Sebastian Bach")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("resolveWorkGroups = %+v, want exactly 1 Matthäus root (354 must not surface as a second root)", groups)
+	}
+	if groups[0].RootID != 353 {
+		t.Errorf("groups[0].RootID = %d, want 353 (Matthäus-Passion, BWV 244)", groups[0].RootID)
 	}
 }
 

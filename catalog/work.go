@@ -74,12 +74,13 @@ const composerLinkType = 168
 
 // resolveWorkGroup resolves the single title-priority work-group root for
 // (title, composer): a thin compatibility wrapper over resolveWorkGroups that
-// returns only its first element. Callers that cannot retry across candidates
-// (e.g. findRecordingsByWork) use this and inherit the title-source-priority
-// behavior, INCLUDING its known trap (see resolveWorkGroups' doc comment) —
-// only ResolvePerformance retries the full candidate list.
+// returns only its first element and discards its warnings. Both
+// ResolvePerformance and findRecordingsByWork call resolveWorkGroups directly
+// so they can retry across candidates; this wrapper remains for callers (and
+// tests) that only want a single best-guess root and accept the known trap
+// (see resolveWorkGroups' doc comment).
 func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, error) {
-	groups, err := m.resolveWorkGroups(title, composer)
+	groups, _, err := m.resolveWorkGroups(title, composer)
 	if err != nil {
 		return WorkGroup{}, false, err
 	}
@@ -107,7 +108,7 @@ func (m *MirrorDB) resolveWorkGroup(title, composer string) (WorkGroup, bool, er
 // candidate actually carries matching performances, instead of failing
 // outright (or worse, substituting a real-but-wrong work) when the
 // first-ranked candidate is real but not the one the query means.
-func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error) {
+func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, []string, error) {
 	// (a) candidate works by title FTS, composer-CONDITIONED when the composer
 	// resolves to a known artist: l_artist_work (168, composer) is joined into
 	// the candidate query itself so the top-25 window is composed of works
@@ -121,7 +122,7 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 	var rows *sql.Rows
 	var err error
 	if composerID, ok, cerr := m.composerIDFor(composer); cerr != nil {
-		return nil, cerr
+		return nil, nil, cerr
 	} else if ok {
 		rows, err = m.DB.Query(
 			`SELECT DISTINCT f.rowid
@@ -135,30 +136,36 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 			`SELECT rowid FROM work_fts WHERE work_fts MATCH ? ORDER BY rank LIMIT 25`, ftsTitle(title))
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var candIDs []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		candIDs = append(candIDs, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// work_alias union (BOTH arms of step (a), composer-conditioned or not):
 	// English forms live mostly on movement-level works, not the family root, so a
 	// title-FTS miss on the root still recovers the family via a movement alias —
 	// the alias-sourced ids pass through the same composer filter (b) and root
-	// resolution (c) as the title-FTS candidates, unchanged.
-	aliasIDs, err := m.workAliasCandidates(title)
+	// resolution (c) as the title-FTS candidates, unchanged. truncated signals the
+	// 50-id scan cap broke the alias scan short — surfaced as a warning so a
+	// caller knows resolution may be incomplete, never silently.
+	aliasIDs, truncated, err := m.workAliasCandidates(title)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var warnings []string
+	if truncated {
+		warnings = append(warnings, "work_alias candidates truncated at 50; resolution may be incomplete")
 	}
 	// candSource tracks each candidate id's origin for WorkGroup.Resolution
 	// ("title" vs "alias"). Title-sourced ids keep their original position ahead
@@ -189,7 +196,7 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 	if composer != "" {
 		var err error
 		if composerNames, err = m.nameVariants(composer); err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 	}
 	var matched []int64
@@ -200,25 +207,31 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 		}
 		names, err := m.workComposers(id)
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		if composerAmong(names, composerNames) {
 			matched = append(matched, id)
 		}
 	}
 	if len(matched) == 0 {
-		return nil, nil
+		return nil, warnings, nil
 	}
 
-	// (c) resolve EVERY matched candidate's root: walk its 281 parent when it has
-	// one, then check for 281 children (a real work-group) vs. an arc-less
-	// title-twin stub — same per-candidate logic as before, just no longer
-	// stopping at the first childful hit. Distinct childful roots are kept in
-	// matched's order (title-sourced candidates precede alias-sourced ones — see
-	// candSource above), first occurrence wins on a duplicate root (the "title
-	// wins when both sources reach the same root" guarantee). When NO candidate
-	// resolves to a childful root, fall back to a single group rooted at
-	// matched[0] itself, unwalked — the pre-existing standalone-work behavior.
+	// (c) resolve EVERY matched candidate's root: climb its 281 parent chain
+	// TRANSITIVELY (bounded by workGroupMaxDepth, same bound and query shape as
+	// workGroupFromPerformers' ancestor climb) — a one-level-only walk stops at a
+	// childful MID-level part when a deeper alias hit (e.g. a grandchild movement)
+	// gave that part a child of its own, wrongly surfacing it as a second root
+	// instead of continuing to the true family root (see
+	// TestResolveWorkGroupsAscendsPastMidLevelPartToMatthausRoot). Then check for
+	// 281 children (a real work-group) vs. an arc-less title-twin stub — same
+	// per-candidate logic as before, just no longer stopping at the first childful
+	// hit. Distinct childful roots are kept in matched's order (title-sourced
+	// candidates precede alias-sourced ones — see candSource above), first
+	// occurrence wins on a duplicate root (the "title wins when both sources reach
+	// the same root" guarantee). When NO candidate resolves to a childful root,
+	// fall back to a single group rooted at matched[0] itself, unwalked — the
+	// pre-existing standalone-work behavior.
 	type rootHit struct {
 		root         int64
 		resolvedFrom string
@@ -227,23 +240,27 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 	var roots []rootHit
 	for _, cand := range matched {
 		r := cand
-		var parent int64
-		perr := m.DB.QueryRow(
-			`SELECT lww.entity0 FROM l_work_work lww
-			   JOIN link l ON l.id = lww.link
-			  WHERE lww.entity1 = ? AND l.link_type = ?
-			  ORDER BY lww.entity0 LIMIT 1`, cand, workGroupLinkParts).Scan(&parent)
-		if perr == nil {
+		for depth := 0; depth < workGroupMaxDepth; depth++ {
+			var parent int64
+			perr := m.DB.QueryRow(
+				`SELECT lww.entity0 FROM l_work_work lww
+				   JOIN link l ON l.id = lww.link
+				  WHERE lww.entity1 = ? AND l.link_type = ?
+				  ORDER BY lww.entity0 LIMIT 1`, r, workGroupLinkParts).Scan(&parent)
+			if perr == sql.ErrNoRows {
+				break
+			}
+			if perr != nil {
+				return nil, warnings, perr
+			}
 			r = parent
-		} else if perr != sql.ErrNoRows {
-			return nil, perr
 		}
 		var childCount int
 		if err := m.DB.QueryRow(
 			`SELECT COUNT(*) FROM l_work_work lww
 			   JOIN link l ON l.id = lww.link
 			  WHERE lww.entity0 = ? AND l.link_type = ?`, r, workGroupLinkParts).Scan(&childCount); err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		if childCount == 0 || seenRoot[r] {
 			continue
@@ -259,7 +276,7 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 	for _, rh := range roots {
 		g, ok, err := m.groupByRoot(rh.root)
 		if err != nil {
-			return nil, err
+			return nil, warnings, err
 		}
 		if !ok {
 			continue
@@ -268,9 +285,9 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 		out = append(out, g)
 	}
 	if len(out) == 0 {
-		return nil, nil
+		return nil, warnings, nil
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 // workAliasCandidates scans work_alias for aliases whose folded form begins
@@ -279,24 +296,28 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, error
 // Passion, BWV 244: Part I" vs query "St Matthew Passion" — so the comparison
 // folds punctuation out entirely, not just the core.NormalizeName diacritic/
 // case fold the Go credit matcher uses. A full table scan (158k rows on the
-// mirror) is milliseconds; distinct work ids, capped at 50.
-func (m *MirrorDB) workAliasCandidates(title string) ([]int64, error) {
+// mirror) is milliseconds, ORDER BY work for deterministic candidate order
+// (resolveWorkGroups' candidate/root order is observable — Resolution
+// provenance depends on it); distinct work ids, capped at 50. truncated=true
+// when the cap broke the scan short of the full table — the caller surfaces
+// this as an incomplete-resolution warning rather than silently returning a
+// partial candidate set.
+func (m *MirrorDB) workAliasCandidates(title string) (out []int64, truncated bool, err error) {
 	want := foldWorkTitle(title)
 	if want == "" {
-		return nil, nil
+		return nil, false, nil
 	}
-	rows, err := m.DB.Query(`SELECT work, name FROM work_alias`)
+	rows, err := m.DB.Query(`SELECT work, name FROM work_alias ORDER BY work`)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	seen := map[int64]bool{}
-	var out []int64
 	for rows.Next() {
 		var work int64
 		var name string
 		if err := rows.Scan(&work, &name); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if !strings.HasPrefix(foldWorkTitle(name), want) {
 			continue
@@ -307,10 +328,14 @@ func (m *MirrorDB) workAliasCandidates(title string) ([]int64, error) {
 		seen[work] = true
 		out = append(out, work)
 		if len(out) >= 50 {
+			truncated = true
 			break
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, truncated, nil
 }
 
 // foldWorkTitle folds a title for the alias-prefix comparison in
