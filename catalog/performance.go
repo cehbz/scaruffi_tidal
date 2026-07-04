@@ -77,6 +77,7 @@ type Performance struct {
 	RGArtistCredit string                 `json:"rg_artist_credit,omitempty"`
 	DiscogsMaster  core.DiscogsMasterID   `json:"discogs_master_id,omitempty"`
 	Label          string                 `json:"label,omitempty"`
+	LabelID        int64                  `json:"discogs_label_id,omitempty"`
 	Catno          string                 `json:"catno,omitempty"`
 	Sources        []core.Source          `json:"sources"`
 	Confidence     Confidence             `json:"confidence"`
@@ -150,13 +151,20 @@ func (m *MirrorDB) ResolvePerformance(q PerformanceQuery) (PerformanceResult, er
 			}
 		}
 	}
+	// Bridge every performer constraint to a Discogs id ONCE: discogsPerformances
+	// (candidate discovery) and reconcile (corroboration grading) both need it, and
+	// bridging touches the mirror per credit — a single shared pass, not two.
+	armIDs, bridgeWarnings, err := m.bridgedConstraintIDs(q.Credits)
+	if err != nil {
+		return PerformanceResult{}, err
+	}
 	var dc []dcPerf
 	if !q.MBOnly {
-		if dc, err = m.discogsPerformances(q); err != nil {
+		if dc, err = m.discogsPerformances(q, armIDs); err != nil {
 			return PerformanceResult{}, err
 		}
 	}
-	perfs, warnings, err := m.reconcile(mb, dc, q)
+	perfs, warnings, err := m.reconcile(mb, dc, q, armIDs, bridgeWarnings)
 	warnings = append(append(append([]string{}, groupWarnings...), fallbackWarnings...), warnings...)
 	if err != nil {
 		return PerformanceResult{}, err
@@ -230,20 +238,33 @@ func nearestByYear(ps []Performance, year int) []Performance {
 	return out
 }
 
-// filterByLabel keeps performances whose label shares a family with the requested
-// label (matched by Discogs label id via sameLabelFamily); catno, when given, must
-// also match casefold. A performance with no reconciled label is dropped by a label
-// selector (it cannot be confirmed).
+// filterByLabel keeps performances whose label shares a Discogs label family with
+// the requested label: the wanted name is resolved to a Discogs id once, and each
+// performance with both ids present (its reconciled LabelID and the resolved want
+// id) is kept via m.sameLabelFamily — so a query for "Columbia" keeps a take
+// reconciled to its sublabel "CBS". When either id is missing (the wanted name has
+// no dc.label row, or the performance carries no reconciled LabelID — MB-only, never
+// reconciled with Discogs), the filter falls back to core.NormalizeName equality on
+// the label name. catno, when given, must also match casefold. A performance with no
+// label at all is dropped by a label selector (it cannot be confirmed).
 func (m *MirrorDB) filterByLabel(ps []Performance, label, catno string) ([]Performance, error) {
 	wantKey := core.NormalizeName(label)
+	wantID, wantOK, err := m.labelIDByName(label)
+	if err != nil {
+		return nil, err
+	}
 	var out []Performance
 	for _, p := range ps {
 		if p.Label == "" {
 			continue
 		}
-		if core.NormalizeName(p.Label) != wantKey {
-			// Different label name — try the family via ids is unavailable here (Label is
-			// a name); accept only exact-family by name equality for now.
+		matched := core.NormalizeName(p.Label) == wantKey
+		if wantOK && p.LabelID != 0 {
+			if matched, err = m.sameLabelFamily(wantID, p.LabelID); err != nil {
+				return nil, err
+			}
+		}
+		if !matched {
 			continue
 		}
 		if catno != "" && core.NormalizeName(p.Catno) != core.NormalizeName(catno) {
@@ -475,7 +496,10 @@ func creditsSatisfy(have core.Credits, want []wantCredit) bool {
 }
 
 // matchedForces returns the subset of a recording's credits whose role is one of the
-// requested roles (the "matched credit set" captured on the performance).
+// requested roles OR one of their umbrella roles (the same widening creditsSatisfy/
+// matchesAny apply when deciding whether a recording qualifies at all) — otherwise a
+// recording that only qualified via e.g. the conductor->chorus_master umbrella would
+// surface with the very credit that satisfied it missing from the captured set.
 func matchedForces(have core.Credits, want []wantCredit) core.Credits {
 	if len(want) == 0 {
 		return nil
@@ -483,6 +507,15 @@ func matchedForces(have core.Credits, want []wantCredit) core.Credits {
 	roles := map[core.Role]bool{}
 	for _, w := range want {
 		roles[w.Role] = true
+		switch w.Role {
+		case core.RoleConductor:
+			roles[core.RoleChorusMaster] = true
+		case core.RoleOrchestra:
+			roles[core.RoleChorus] = true
+			roles[core.RoleArtist] = true
+		case core.RoleChorus, core.RoleSoloist:
+			roles[core.RoleArtist] = true
+		}
 	}
 	var out core.Credits
 	for _, c := range have {
@@ -494,8 +527,10 @@ func matchedForces(have core.Credits, want []wantCredit) core.Credits {
 }
 
 // workStop drops pure connectors so the work match keys on the distinctive
-// form word(s) + number, not on filler.
-var workStop = map[string]bool{"in": true, "of": true, "the": true, "for": true, "a": true, "and": true, "on": true, "de": true}
+// form word(s) + number, not on filler. "no" ("No. 5") is the numbering
+// abbreviation's connector word, not a content token; it must not itself
+// satisfy albumMatchesWork's shared-word requirement independent of the digit.
+var workStop = map[string]bool{"in": true, "of": true, "the": true, "for": true, "a": true, "and": true, "on": true, "de": true, "no": true}
 
 // significantWorkTokens lowercases and splits a work title into content tokens
 // (letters/digits), dropping connectors.
@@ -752,6 +787,27 @@ func groupComposerConfirmed(group []dcTrack, trackCredits map[int64][]dcCredit, 
 	return false
 }
 
+// bridgedConstraintIDs bridges every performer credit (composer excluded — it is
+// not a within-block identity constraint) to a Discogs artist id, ONE pass shared by
+// discogsPerformances (candidate discovery) and reconcile (corroboration grading) —
+// see ResolvePerformance, which calls this once and threads the result to both.
+// warnings flags each credit bridged via the lower-confidence name-match fallback.
+func (m *MirrorDB) bridgedConstraintIDs(credits core.Credits) (ids []int64, warnings []string, err error) {
+	for _, w := range performerCredits(credits) {
+		id, viaFallback, ok, err := m.bridgedDiscogsID(w.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			ids = append(ids, id)
+			if viaFallback {
+				warnings = append(warnings, "discogs bridge for "+w.Name+" via name-match fallback (unlinked or dangling id)")
+			}
+		}
+	}
+	return ids, warnings, nil
+}
+
 // dcPerf is a Discogs-side performance candidate: a master from the performer-id
 // intersection whose reconstructed work-group confirmed the composer.
 type dcPerf struct {
@@ -774,7 +830,11 @@ type dcPerf struct {
 // batched. Returns nil when the composer or every performer lacks a Discogs identity
 // (no anchor -> no claim). A composer or performer credited only on releases outside
 // the master's credited release is a documented miss (build-time concordance scope).
-func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
+// armIDs is the caller's already-bridged performer-constraint ids (bridgedConstraintIDs,
+// shared with reconcile so a query bridges its performer set once); the composer bridge
+// stays local here (discogsPerformances is the only caller that needs it, to bound a
+// lone performer arm and to confirm the reconstructed work-group's composer).
+func (m *MirrorDB) discogsPerformances(q PerformanceQuery, armIDs []int64) ([]dcPerf, error) {
 	composerNames := q.Credits.Names(core.RoleComposer)
 	if len(composerNames) == 0 {
 		return nil, nil
@@ -783,22 +843,13 @@ func (m *MirrorDB) discogsPerformances(q PerformanceQuery) ([]dcPerf, error) {
 	if err != nil || !ok {
 		return nil, err
 	}
-	var armIDs []int64
-	for _, c := range performerCredits(q.Credits) {
-		id, _, ok, err := m.bridgedDiscogsID(c.Name)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			armIDs = append(armIDs, id)
-		}
-	}
 	if len(armIDs) == 0 {
 		return nil, nil // a performance is identified by its performers
 	}
 	if len(armIDs) == 1 {
 		// A lone orchestra arm can span 10^4+ releases; the composer arm bounds it.
-		armIDs = append(armIDs, composerID)
+		// Copy rather than append in place: armIDs is shared with reconcile's caller.
+		armIDs = append(append([]int64{}, armIDs...), composerID)
 	}
 	cands, err := m.performerIntersectionCandidates(armIDs)
 	if err != nil || len(cands) == 0 {
@@ -884,25 +935,11 @@ func creditedArtistIDs(release []dcCredit, tracks []dcTrack, trackCredits map[in
 // confirmed, performers partially corroborated — an unbridged or uncorroborated
 // constraint); both carry dual identity (DiscogsMaster/Label/Catno,
 // Sources=[MusicBrainz,Discogs]). Unmatched MB performances stay ConfidenceMedium. Unused
-// Discogs candidates are appended as Discogs-only ConfidenceLow performances.
-func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) ([]Performance, []string, error) {
-	// The query's performer-constraint Discogs ids (shared across all MB performances of
-	// this query).
-	var constraintIDs []int64
-	var warnings []string
-	for _, w := range performerCredits(q.Credits) {
-		id, viaFallback, ok, err := m.bridgedDiscogsID(w.Name)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			constraintIDs = append(constraintIDs, id)
-			if viaFallback {
-				warnings = append(warnings, "discogs bridge for "+w.Name+" via name-match fallback (unlinked or dangling id)")
-			}
-		}
-	}
-
+// Discogs candidates are appended as Discogs-only ConfidenceLow performances. constraintIDs
+// and warnings are the caller's already-bridged performer-constraint ids
+// (bridgedConstraintIDs, shared with discogsPerformances so a query bridges its performer
+// set once, not twice).
+func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery, constraintIDs []int64, warnings []string) ([]Performance, []string, error) {
 	allBridged := len(constraintIDs) == len(performerCredits(q.Credits))
 
 	// Pairing is globally year-proximate, not first-match-wins: score every (mb, dc)
@@ -948,6 +985,7 @@ func (m *MirrorDB) reconcile(mb []Performance, dc []dcPerf, q PerformanceQuery) 
 		d := dc[p.j]
 		mb[p.i].DiscogsMaster = core.DiscogsMasterID(d.MasterID)
 		mb[p.i].Label = d.Label
+		mb[p.i].LabelID = d.LabelID
 		mb[p.i].Catno = d.Catno
 		mb[p.i].Sources = []core.Source{core.SourceMusicBrainz, core.SourceDiscogs}
 		// High requires every performer constraint to be bridged to a Discogs id (not just

@@ -78,6 +78,19 @@ func perfsYears(ps []Performance) []int {
 	return out
 }
 
+// bridgeIDs computes q's bridged performer-constraint ids the same way
+// ResolvePerformance does (bridgedConstraintIDs, called once, threaded to both
+// discogsPerformances and reconcile) — direct callers of those two unexported
+// methods need to pass the same ids in.
+func bridgeIDs(t *testing.T, m *MirrorDB, q PerformanceQuery) []int64 {
+	t.Helper()
+	ids, _, err := m.bridgedConstraintIDs(q.Credits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
 func beethovenPerfQuery() PerformanceQuery {
 	return PerformanceQuery{
 		// FORMAL work title (divergent from the album-style Discogs title). Artist-first
@@ -102,7 +115,7 @@ func TestDiscogsPerformancesPerformerDriven(t *testing.T) {
 			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 		},
 	}
-	got, err := m.discogsPerformances(q)
+	got, err := m.discogsPerformances(q, bridgeIDs(t, m, q))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +140,7 @@ func TestDiscogsPerformancesMultiComposerTrap(t *testing.T) {
 			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 		},
 	}
-	got, err := m.discogsPerformances(q)
+	got, err := m.discogsPerformances(q, bridgeIDs(t, m, q))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +162,7 @@ func TestDiscogsPerformancesMahlerQueryTakesDecoy(t *testing.T) {
 			{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 		},
 	}
-	got, err := m.discogsPerformances(q)
+	got, err := m.discogsPerformances(q, bridgeIDs(t, m, q))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +178,7 @@ func TestDiscogsPerformancesNoComposerNoClaim(t *testing.T) {
 		{Role: core.RoleConductor, Name: "Leonard Bernstein"},
 		{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 	}
-	dps, err := m.discogsPerformances(q)
+	dps, err := m.discogsPerformances(q, bridgeIDs(t, m, q))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +195,15 @@ func TestReconcileGradesByConstraintCompleteness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dc, err := m.discogsPerformances(q)
+	ids, warnings, err := m.bridgedConstraintIDs(q.Credits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	perfs, _, err := m.reconcile(mb, dc, q)
+	dc, err := m.discogsPerformances(q, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perfs, _, err := m.reconcile(mb, dc, q, ids, warnings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +239,11 @@ func TestReconcileGlobalYearPairing(t *testing.T) {
 		{Role: core.RoleConductor, Name: "Leonard Bernstein"},
 		{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 	}}
-	got, _, err := m.reconcile(mb, dc, q)
+	ids, warnings, err := m.bridgedConstraintIDs(q.Credits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := m.reconcile(mb, dc, q, ids, warnings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,12 +267,25 @@ func TestReconcileHighRequiresAllBridged(t *testing.T) {
 		{Role: core.RoleOrchestra, Name: "New York Philharmonic"},
 		{Role: core.RoleChorus, Name: "Wiener Singverein"},
 	}}
-	got, _, err := m.reconcile(mb, dc, q)
+	ids, warnings, err := m.bridgedConstraintIDs(q.Credits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := m.reconcile(mb, dc, q, ids, warnings)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got[0].Confidence != ConfidenceMedium {
 		t.Fatalf("unbridged constraint must cap at Medium, got %s", got[0].Confidence)
+	}
+}
+
+func TestSignificantWorkTokensDropsNoStopToken(t *testing.T) {
+	// "No." (as in "Symphony No. 5") is a pure connector, not a distinctive form
+	// word — it must not survive into the token set alongside the digit it precedes.
+	got := significantWorkTokens("Symphony No. 5")
+	if got["no"] {
+		t.Errorf("significantWorkTokens(%q) = %v, must not contain the stop token %q", "Symphony No. 5", got, "no")
 	}
 }
 
@@ -307,6 +341,25 @@ func TestResolvePerformanceCapturesWithYearSelector(t *testing.T) {
 	}
 	if res.Performances[0].Confidence != ConfidenceHigh {
 		t.Errorf("the 1963 take reconciles with Discogs → high, got %q", res.Performances[0].Confidence)
+	}
+}
+
+// TestResolvePerformanceLabelFamilyKeepsSublabelTake: the fixture's 1963 take
+// reconciles with Discogs master 70000, whose main release is labelled CBS (dc
+// label id 11), a sublabel of Columbia (id 10, label_relationship parent). A
+// `Label: "Columbia"` selector must keep that take via label-family (not
+// name-equality, which would drop every take: neither "CBS" nor "Deutsche
+// Grammophon" (the 1985 take's label) equals "Columbia" by name).
+func TestResolvePerformanceLabelFamilyKeepsSublabelTake(t *testing.T) {
+	m := newTestMirror(t)
+	q := beethovenPerfQuery() // FORMAL title; two 1963/1985 takes, no year selector.
+	q.Label = "Columbia"
+	res, err := m.ResolvePerformance(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Performances) != 1 || res.Performances[0].FirstYear != 1963 {
+		t.Fatalf("label-family filter should keep only the 1963 CBS take (Columbia's sublabel), got %+v", res.Performances)
 	}
 }
 
@@ -517,6 +570,50 @@ func TestCreditsSatisfyEnsembleUmbrella(t *testing.T) {
 		if got := creditsSatisfy(c.have, wantsOf(c.want)); got != c.ok {
 			t.Errorf("%s: creditsSatisfy = %v, want %v", c.name, got, c.ok)
 		}
+	}
+}
+
+// TestMatchedForcesConductorUmbrellaIncludesChorusMaster: matchedForces (the
+// "matched credit set" captured onto a Performance) must widen its kept-role set
+// by the same umbrella creditsSatisfy/matchesAny use, or a recording that only
+// qualified via the conductor->chorus_master umbrella surfaces with an EMPTY
+// Credits field (the credit that actually satisfied the query is silently
+// dropped from the output).
+func TestMatchedForcesConductorUmbrellaIncludesChorusMaster(t *testing.T) {
+	have := core.Credits{{Role: core.RoleChorusMaster, Name: "Barnaby Smith"}}
+	want := wantsOf(core.Credits{{Role: core.RoleConductor, Name: "Barnaby Smith"}})
+	got := matchedForces(have, want)
+	if !got.MatchesRole(core.RoleChorusMaster, "Barnaby Smith") {
+		t.Errorf("matchedForces(%v, conductor:Barnaby Smith) = %v, want it to include the chorus_master credit that satisfied the query", have, got)
+	}
+}
+
+// TestResolvePerformanceConductorUmbrellaMatchesStandaloneChorusMaster exercises
+// the same umbrella end-to-end: fixture recording 32 ("Missa Papae Marcelli",
+// r-mpm-acap) carries ONLY a chorus_master credit for Barnaby Smith, no
+// conductor. A `conductor: Barnaby Smith` query must both select it (the
+// pre-existing umbrella in creditsSatisfy) AND surface that chorus_master
+// credit on the resolved Performance (the matchedForces umbrella this fix adds).
+func TestResolvePerformanceConductorUmbrellaMatchesStandaloneChorusMaster(t *testing.T) {
+	m := newTestMirror(t)
+	res, err := m.ResolvePerformance(PerformanceQuery{
+		Work: "Missa Papae Marcelli",
+		Credits: core.Credits{
+			{Role: core.RoleComposer, Name: "Palestrina"},
+			{Role: core.RoleConductor, Name: "Barnaby Smith"},
+		},
+		MBOnly: true,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome == OutcomeAbsent || len(res.Performances) == 0 {
+		t.Fatalf("a standalone chorus_master must satisfy a conductor query via the umbrella; outcome=%q warnings=%v", res.Outcome, res.Warnings)
+	}
+	p := res.Performances[0]
+	if !p.Credits.MatchesRole(core.RoleChorusMaster, "Barnaby Smith") {
+		t.Errorf("matched credits %v missing the chorus_master credit that satisfied the conductor query", p.Credits)
 	}
 }
 

@@ -25,3 +25,19 @@ func TestLabelFamily(t *testing.T) {
 		t.Error("a label is its own family")
 	}
 }
+
+func TestLabelIDByName(t *testing.T) {
+	m := newTestMirror(t)
+	id, ok, err := m.labelIDByName("columbia") // casefold
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || id != 10 {
+		t.Fatalf("labelIDByName(columbia) = (%d, %v), want (10, true)", id, ok)
+	}
+	if _, ok, err := m.labelIDByName("Nonexistent Label"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Error("an unknown label name must report ok=false")
+	}
+}

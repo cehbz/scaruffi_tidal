@@ -1,5 +1,7 @@
 package catalog
 
+import "database/sql"
+
 // maxLabelDepth bounds the label_relationship parent walk (cycle-guarded); deep
 // sublabel chains beyond this fall back to the deepest resolved ancestor.
 const maxLabelDepth = 8
@@ -28,6 +30,20 @@ func (m *MirrorDB) labelRoot(labelID int64) (int64, error) {
 		cur = parent
 	}
 	return cur, nil
+}
+
+// labelIDByName resolves a Discogs label name to its id (casefold exact match).
+// ok=false when no dc.label row matches.
+func (m *MirrorDB) labelIDByName(name string) (int64, bool, error) {
+	var id int64
+	err := m.DB.QueryRow(`SELECT id FROM dc.label WHERE name = ? COLLATE NOCASE LIMIT 1`, name).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
 }
 
 // sameLabelFamily reports whether two labels share a family root.

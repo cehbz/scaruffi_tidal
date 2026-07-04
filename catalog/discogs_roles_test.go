@@ -32,6 +32,7 @@ func TestDiscogsRolesCombined(t *testing.T) {
 		"Composed By, Conductor":           {core.RoleComposer, core.RoleConductor},
 		"Conductor, Composed By":           {core.RoleConductor, core.RoleComposer},
 		"Conductor [Orchestra]":            {core.RoleConductor},
+		"Conductor [Orchestra, Chorus]":    {core.RoleConductor}, // comma inside brackets must not fragment
 		"Chorus Master [Camerata Singers]": {core.RoleChorusMaster},
 		"Composed By":                      {core.RoleComposer},
 		"Producer, Engineer":               nil, // neither maps
