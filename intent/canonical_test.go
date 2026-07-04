@@ -50,6 +50,32 @@ func TestCanonicalIdempotent(t *testing.T) {
 	}
 }
 
+func TestCanonicalEditionRoundTrip(t *testing.T) {
+	src := `# X
+
+## T · album
+- edition: original, mofi, label=DG, catno=2530 516, year=1975
+`
+	doc, ds := Parse([]byte(src))
+	ds = append(ds, Validate(&doc)...)
+	if HasError(ds) {
+		t.Fatalf("errors: %v", ds)
+	}
+	once := Canonical(doc)
+	if !strings.Contains(string(once), "- edition: original, mofi, label=DG, catno=2530 516, year=1975") {
+		t.Fatalf("edition cue not emitted in expected order:\n%s", once)
+	}
+	doc2, ds2 := Parse(once)
+	ds2 = append(ds2, Validate(&doc2)...)
+	if HasError(ds2) {
+		t.Fatalf("errors on reparse: %v", ds2)
+	}
+	twice := Canonical(doc2)
+	if string(once) != string(twice) {
+		t.Errorf("edition canonical form not idempotent:\n--- once ---\n%s\n--- twice ---\n%s", once, twice)
+	}
+}
+
 func TestCanonicalExplicitAttrs(t *testing.T) {
 	doc, _ := Parse([]byte("# X\n## T · recording\n- soloist: Glenn Gould (instrument=piano)\n"))
 	Validate(&doc)

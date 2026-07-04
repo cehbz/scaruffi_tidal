@@ -19,6 +19,15 @@ type Doc struct {
 	Items []Item
 }
 
+// EditionSpec is the item's edition preference: free-form markers plus
+// structured resolution cues (label/catno/year) for resolve-performance.
+type EditionSpec struct {
+	Markers []string
+	Label   string
+	Catno   string
+	Year    int
+}
+
 // Item is one playlist entry.
 type Item struct {
 	Title         string
@@ -27,7 +36,7 @@ type Item struct {
 	Work          string
 	Year          int
 	Criteria      []string
-	Edition       []string
+	Edition       EditionSpec
 	Rendering     []string
 	MBID          string
 	DiscogsMaster string
@@ -140,7 +149,17 @@ func parseBullet(it *Item, s string, ln int, ds *[]Diagnostic) {
 	case "criteria":
 		it.Criteria = append(it.Criteria, splitTokens(val)...)
 	case "edition":
-		it.Edition = append(it.Edition, splitList(val)...)
+		cues := parseEdition(val, ln, ds)
+		it.Edition.Markers = append(it.Edition.Markers, cues.Markers...)
+		if cues.Label != "" {
+			it.Edition.Label = cues.Label
+		}
+		if cues.Catno != "" {
+			it.Edition.Catno = cues.Catno
+		}
+		if cues.Year != 0 {
+			it.Edition.Year = cues.Year
+		}
 	case "rendering":
 		it.Rendering = append(it.Rendering, splitList(val)...)
 	case "mbid":
@@ -208,6 +227,46 @@ func splitTokens(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseEdition splits an "edition:" bullet value into free-form markers and
+// structured label/catno/year cues, in input order. A token matching
+// "<key>=<value>" where key is label, catno, or year is a cue — the value is
+// everything after "=", trimmed (catno may contain spaces). Any other token
+// containing "=" is an unknown edition cue key, reported as an error
+// diagnostic; a year cue that isn't an integer is likewise an error. Tokens
+// without "=" are markers.
+func parseEdition(val string, ln int, ds *[]Diagnostic) EditionSpec {
+	var spec EditionSpec
+	for _, tok := range strings.Split(val, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		key, rest, hasCue := strings.Cut(tok, "=")
+		if !hasCue {
+			spec.Markers = append(spec.Markers, tok)
+			continue
+		}
+		key = strings.TrimSpace(key)
+		rest = strings.TrimSpace(rest)
+		switch key {
+		case "label":
+			spec.Label = rest
+		case "catno":
+			spec.Catno = rest
+		case "year":
+			y, err := strconv.Atoi(rest)
+			if err != nil {
+				*ds = append(*ds, Diagnostic{SevError, ln, fmt.Sprintf("edition year cue must be an integer, got %q", rest)})
+				continue
+			}
+			spec.Year = y
+		default:
+			*ds = append(*ds, Diagnostic{SevError, ln, fmt.Sprintf("unknown edition cue key %q", key)})
+		}
+	}
+	return spec
 }
 
 // splitList splits a ','-separated list (edition / rendering markers).

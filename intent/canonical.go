@@ -31,8 +31,8 @@ func Canonical(d Doc) []byte {
 		if len(it.Criteria) > 0 {
 			fmt.Fprintf(&b, "- criteria: %s\n", strings.Join(it.Criteria, "; "))
 		}
-		if len(it.Edition) > 0 {
-			fmt.Fprintf(&b, "- edition: %s\n", strings.Join(it.Edition, ", "))
+		if ed := editionSurface(it.Edition); ed != "" {
+			fmt.Fprintf(&b, "- edition: %s\n", ed)
 		}
 		if len(it.Rendering) > 0 {
 			fmt.Fprintf(&b, "- rendering: %s\n", strings.Join(it.Rendering, ", "))
@@ -89,6 +89,22 @@ func creditSurface(c core.Credit) string {
 		parts[i] = k + "=" + c.Attrs[k]
 	}
 	return fmt.Sprintf("%s (%s)", c.Name, strings.Join(parts, ", "))
+}
+
+// editionSurface renders an EditionSpec's markers (input order) followed by
+// its label=/catno=/year= cues, in that fixed order.
+func editionSurface(ed EditionSpec) string {
+	parts := append([]string{}, ed.Markers...)
+	if ed.Label != "" {
+		parts = append(parts, "label="+ed.Label)
+	}
+	if ed.Catno != "" {
+		parts = append(parts, "catno="+ed.Catno)
+	}
+	if ed.Year != 0 {
+		parts = append(parts, fmt.Sprintf("year=%d", ed.Year))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Summary returns a one-line coverage report: item count, per-kind counts, total

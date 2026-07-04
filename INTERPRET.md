@@ -40,6 +40,8 @@ drifts.
   `soloist: Wilhelm Kempff (piano)` / `conductor: Josef Krips` /
   `orchestra: London Symphony Orchestra`.
 - Route alternates to `note:` or to additional items per the structure.
+- Label / catalog-number / vintage-year cues attached to a recommendation (e.g. "DG
+  2530 516, 1975") go to `edition: label=…, catno=…, year=…`, not into `note:`.
 - Map playlist-wide signals to the `Brief:` line.
 - Emit intent markdown per the [intent schema](#the-intent-schema).
 
@@ -98,6 +100,8 @@ Scaruffi example (the hard case — compound classical performers):
   - performers: compound after "Recommended recording:" —
                 decompose by knowledge → conductor / soloist(+instrument) / orchestra / chorus
   - year:       trailing "(YYYY)" when present
+  - edition:    label/catno/year cues on the recommendation (e.g. "DG 2530 516,
+                1975") → `edition: label=DG, catno=2530 516, year=1975`
 - alternates: "X or Y" and "(also …)" → note:
 - brief: none (Scaruffi's single pick is the discrimination)
 ```

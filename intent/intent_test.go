@@ -84,3 +84,52 @@ func TestParseExplicitAttrs(t *testing.T) {
 		t.Errorf("credit = %+v", c)
 	}
 }
+
+func TestParseEditionMixedCues(t *testing.T) {
+	src := "# X\n## T · album\n- edition: original, mofi, label=DG, catno=2530 516, year=1975\n"
+	doc, ds := Parse([]byte(src))
+	if HasError(ds) {
+		t.Fatalf("unexpected errors: %v", ds)
+	}
+	ed := doc.Items[0].Edition
+	if len(ed.Markers) != 2 || ed.Markers[0] != "original" || ed.Markers[1] != "mofi" {
+		t.Errorf("Markers = %v", ed.Markers)
+	}
+	if ed.Label != "DG" {
+		t.Errorf("Label = %q, want DG", ed.Label)
+	}
+	if ed.Catno != "2530 516" {
+		t.Errorf("Catno = %q, want %q", ed.Catno, "2530 516")
+	}
+	if ed.Year != 1975 {
+		t.Errorf("Year = %d, want 1975", ed.Year)
+	}
+}
+
+func TestParseEditionMarkersOnly(t *testing.T) {
+	doc, ds := Parse([]byte("# X\n## T · album\n- edition: original\n"))
+	if HasError(ds) {
+		t.Fatalf("unexpected errors: %v", ds)
+	}
+	ed := doc.Items[0].Edition
+	if len(ed.Markers) != 1 || ed.Markers[0] != "original" {
+		t.Errorf("Markers = %v, want [original]", ed.Markers)
+	}
+	if ed.Label != "" || ed.Catno != "" || ed.Year != 0 {
+		t.Errorf("expected no cues, got %+v", ed)
+	}
+}
+
+func TestParseEditionUnknownCueKey(t *testing.T) {
+	_, ds := Parse([]byte("# X\n## T · album\n- edition: foo=bar\n"))
+	if !HasError(ds) {
+		t.Errorf("expected an error diagnostic for unknown edition cue key, got %v", ds)
+	}
+}
+
+func TestParseEditionNonIntegerYear(t *testing.T) {
+	_, ds := Parse([]byte("# X\n## T · album\n- edition: year=nineteen\n"))
+	if !HasError(ds) {
+		t.Errorf("expected an error diagnostic for non-integer edition year cue, got %v", ds)
+	}
+}

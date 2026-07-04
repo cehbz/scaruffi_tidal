@@ -27,6 +27,9 @@ tidalist resolve-performance --mb-only \
   --credit orchestra:"The Tallis Scholars"
 ```
 
+When the item carries edition cues, pass them: `--label DG --catno "2530 516" --year
+1975`; `edition.year` wins over the item `year:` bullet when both are present.
+
 - `outcome: "captured"` → one performance, full credit set matched → take it.
 - `outcome: "candidates"` → apply the [picking rules](#picking-rules) below.
 - `outcome: "absent"` → retry `--work` with a title variant (drop a subtitle, try the
