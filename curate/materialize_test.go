@@ -2,10 +2,12 @@ package curate
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cehbz/tidalist/catalog"
+	"github.com/cehbz/tidalist/core"
 	"github.com/cehbz/tidalist/internal/mirrorfixture"
 )
 
@@ -359,5 +361,81 @@ func TestMaterializeAlbumCreditsCarryLatinVariants(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no Gergiev credit in %d credits", len(entry.Credits))
+	}
+}
+
+// TestVariantMemoGetMatchesDirect: variantMemo.get must return exactly what
+// m.LatinAliasVariants returns directly, for both a hit (Gergiev's Cyrillic
+// primary name resolves to a Latin alias) and a miss (a Latin-primary name
+// resolves but carries no distinct Latin alias) — and repeated calls must stay
+// consistent (proves the cache never diverges from the source of truth).
+func TestVariantMemoGetMatchesDirect(t *testing.T) {
+	m := newTestMirror(t)
+	vm := newVariantMemo(m)
+
+	wantHit, err := m.LatinAliasVariants("Валерий Гергиев", core.RoleConductor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHit, err := vm.get("Валерий Гергиев", core.RoleConductor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotHit, wantHit) {
+		t.Errorf("vm.get(hit) = %v, want %v", gotHit, wantHit)
+	}
+
+	wantMiss, err := m.LatinAliasVariants("Peter Phillips", core.RoleConductor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotMiss, err := vm.get("Peter Phillips", core.RoleConductor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotMiss, wantMiss) {
+		t.Errorf("vm.get(miss) = %v, want %v", gotMiss, wantMiss)
+	}
+
+	gotHitAgain, err := vm.get("Валерий Гергиев", core.RoleConductor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotHitAgain, gotHit) {
+		t.Errorf("vm.get repeated = %v, want %v (consistent with first call)", gotHitAgain, gotHit)
+	}
+}
+
+// TestVariantMemoGetCachesPerKey inspects the unexported memo map directly
+// (same package): two calls for the same (role, name) must leave exactly one
+// entry, and a negative result (no variants) must be cached too — the whole
+// point of memoizing is that the common no-alias case doesn't re-run FTS.
+func TestVariantMemoGetCachesPerKey(t *testing.T) {
+	m := newTestMirror(t)
+	vm := newVariantMemo(m)
+
+	if _, err := vm.get("Валерий Гергиев", core.RoleConductor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.get("Валерий Гергиев", core.RoleConductor); err != nil {
+		t.Fatal(err)
+	}
+	if len(vm.memo) != 1 {
+		t.Errorf("memo has %d entries after two calls for the same key, want 1 (%v)", len(vm.memo), vm.memo)
+	}
+
+	if _, err := vm.get("Peter Phillips", core.RoleConductor); err != nil {
+		t.Fatal(err)
+	}
+	key := string(core.RoleConductor) + "\x00" + "Peter Phillips"
+	v, ok := vm.memo[key]
+	if !ok {
+		t.Fatalf("negative result for %q must be cached; memo=%v", key, vm.memo)
+	}
+	if len(v) != 0 {
+		t.Errorf("Peter Phillips variants = %v, want empty", v)
+	}
+	if len(vm.memo) != 2 {
+		t.Errorf("memo has %d entries, want 2 (Gergiev + Phillips); %v", len(vm.memo), vm.memo)
 	}
 }

@@ -303,6 +303,42 @@ func verdictOf(v core.Verdict) verdictJSON {
 
 // --- materialization -----------------------------------------------------------
 
+// variantMemo caches LatinAliasVariants per (role, name) for one Materialize run:
+// the same composers/conductors/orchestras recur across hundreds of selections, and
+// each uncached harvest re-runs artist resolution (FTS) — measured ~300x wall-time
+// over the 267-item Scaruffi corpus (2.9s -> ~14.5min). MirrorDB itself stays
+// cache-free (it's a shared, long-lived object); this cache is scoped to one
+// Materialize call instead.
+type variantMemo struct {
+	m    *catalog.MirrorDB
+	memo map[string][]string
+}
+
+func newVariantMemo(m *catalog.MirrorDB) *variantMemo {
+	return &variantMemo{m: m, memo: make(map[string][]string)}
+}
+
+// get returns the Latin alias variants for (role, name), memoized for the life of
+// this variantMemo. A nil/empty result (no variants) is cached too — that's the
+// common case across a corpus of mostly-Latin-primary names, and the whole point
+// of memoizing. Errors are never cached: a resolution failure is retried, not
+// pinned, on the next call for the same key. The returned slice is shared with
+// the cache entry; the only caller assigns it straight into creditJSON.Variants
+// without mutating it, so handing back the cached slice directly is safe — a
+// caller that needed to mutate it would have to copy first.
+func (vm *variantMemo) get(name string, role core.Role) ([]string, error) {
+	key := string(role) + "\x00" + name
+	if v, ok := vm.memo[key]; ok {
+		return v, nil
+	}
+	v, err := vm.m.LatinAliasVariants(name, role)
+	if err != nil {
+		return nil, err
+	}
+	vm.memo[key] = v
+	return v, nil
+}
+
 // Materialize resolves every selection against the mirrors, judges it, and emits
 // the GoldenDoc plus the Report. Absent identities yield rejected, reviewable
 // entries — never silent drops.
@@ -315,13 +351,14 @@ func Materialize(m *catalog.MirrorDB, sel Selections) (GoldenDoc, Report, error)
 	}
 	doc.Brief = briefJSON{Criteria: briefRaw}
 
+	vm := newVariantMemo(m)
 	for i, s := range sel.Items {
 		criteria := append(append([]core.Criterion{}, sel.Brief...), s.Criteria...)
 		var entry json.RawMessage
 		var item ReportItem
 		switch s.Kind {
 		case "album":
-			entry, item, err = m2AlbumEntry(m, s, criteria)
+			entry, item, err = m2AlbumEntry(m, s, criteria, vm)
 		case "track":
 			entry, item, err = m2TrackEntry(m, s, criteria)
 		}
@@ -345,7 +382,7 @@ func Materialize(m *catalog.MirrorDB, sel Selections) (GoldenDoc, Report, error)
 // unchanged; a Discogs-only selection (no rg_mbid, a discogs_master_id) falls to
 // AlbumByMaster before the identity is declared absent — Discogs carries no
 // secondary-type facts, so its criteria run permissive-flagged (unverifiable).
-func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (json.RawMessage, ReportItem, error) {
+func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion, vm *variantMemo) (json.RawMessage, ReportItem, error) {
 	info, ok, err := m.AlbumByRG(s.RGMBID)
 	if err != nil {
 		return nil, ReportItem{}, err
@@ -381,7 +418,7 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 	}
 	credits := make([]creditJSON, 0, len(rgCredits))
 	for _, c := range rgCredits {
-		vars, err := m.LatinAliasVariants(c.Name, c.Role)
+		vars, err := vm.get(c.Name, c.Role)
 		if err != nil {
 			return nil, ReportItem{}, err
 		}
