@@ -258,8 +258,9 @@ type albumEntryJSON struct {
 }
 
 type creditJSON struct {
-	Artist string `json:"artist"`
-	Role   string `json:"role"`
+	Artist   string   `json:"artist"`
+	Role     string   `json:"role"`
+	Variants []string `json:"variants,omitempty"`
 }
 
 type trackEntryJSON struct {
@@ -380,7 +381,11 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 	}
 	credits := make([]creditJSON, 0, len(rgCredits))
 	for _, c := range rgCredits {
-		credits = append(credits, creditJSON{Artist: c.Name, Role: string(c.Role)})
+		vars, err := m.LatinAliasVariants(c.Name, c.Role)
+		if err != nil {
+			return nil, ReportItem{}, err
+		}
+		credits = append(credits, creditJSON{Artist: c.Name, Role: string(c.Role), Variants: vars})
 	}
 
 	dmid := int64(info.DiscogsMasterID)

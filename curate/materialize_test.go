@@ -323,3 +323,41 @@ func TestMaterializeEmitsPythonCriteriaTags(t *testing.T) {
 		t.Error("Go-vocabulary tags must not leak into the golden JSON")
 	}
 }
+
+func TestMaterializeAlbumCreditsCarryLatinVariants(t *testing.T) {
+	m := newTestMirror(t)
+	sel := Selections{
+		Name:  "variant-test",
+		Items: []Selection{{Kind: "album", RGMBID: "rg-sacre-gergiev"}},
+	}
+	doc, _, err := Materialize(m, sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry struct {
+		Credits []struct {
+			Artist   string   `json:"artist"`
+			Role     string   `json:"role"`
+			Variants []string `json:"variants"`
+		} `json:"credits"`
+	}
+	if err := json.Unmarshal(doc.Entries[0], &entry); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, c := range entry.Credits {
+		// The Gergiev credit here arrives with role "artist" (the release-group's
+		// artist-credit arm of the fixture), not "conductor" — this assertion
+		// checks only the artist string and variants; don't expect a conductor
+		// role from this fixture entry.
+		if c.Artist == "Валерий Гергиев" {
+			found = true
+			if len(c.Variants) != 1 || c.Variants[0] != "Valery Gergiev" {
+				t.Errorf("Gergiev credit variants = %v, want [Valery Gergiev]", c.Variants)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no Gergiev credit in %d credits", len(entry.Credits))
+	}
+}
