@@ -12,6 +12,12 @@ import (
 // and already be in canonical form (Canonical(doc) byte-equals the source). The
 // `tidalist lint-intent --write` step that produced these files leaves them
 // canonical, so this test pins that invariant against future drift.
+//
+// The glob picks up every worked example uniformly — Scaruffi (compound
+// classical credits), Winwood (a single-artist career thread), and Descriptor
+// (a generated-from-predicate discography, slice-6 4A) — with no per-file
+// wiring: dropping a new examples/<name>-intent.md into place is sufficient to
+// gate it here.
 func TestExampleIntentsAreCleanAndCanonical(t *testing.T) {
 	paths, err := filepath.Glob("../examples/*-intent.md")
 	if err != nil {

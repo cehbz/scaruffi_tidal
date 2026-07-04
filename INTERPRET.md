@@ -74,6 +74,70 @@ it.
 
 ---
 
+## Descriptor briefs (discover-by-descriptor)
+
+A **descriptor brief** is not a source that names items — it's a *predicate* ("dark gothic
+trance, at least 5 minutes"). There is nothing to extract yet; the candidate set has to be
+**generated** before Pass 2's "apply the structure uniformly" even makes sense. This is Pass
+1's extra job for a descriptor brief: the structure reading doubles as a generation plan.
+
+**Materialize, don't go live.** Generation runs once. Its output is named, ordinary intent
+items — after that point this is an ordinary resolve-by-identity document, not a
+standing filter. The predicate itself doesn't need to be re-evaluated on every future
+resolution; it already did its job picking these items out of the whole catalog. What
+survives is **provenance**, not a live constraint: the predicate in the playlist name (H1)
+and, per item, a `note: descriptor: <clause(s) it satisfies>` bullet. If a clause happens to
+coincide with the closed `Brief:` criteria vocabulary (`studio`, `no-compilation`,
+`no-live`, `performed-by:`) — e.g. "album-oriented, the canonical records" implying "not a
+live album, not a compilation" — put it on `Brief:` too, since that part *does* keep
+constraining resolution. But don't force a genre/style/era clause onto `Brief:`: those
+tokens are lint-validated against the closed set, and free descriptor text there is a lint
+error, not a warning.
+
+**Decompose the predicate before generating**, into three kinds of clause, each with its own
+tool:
+
+- **Categorical** (genre, style, year) → `tidalist find-by-attributes --style … --genre …
+  --year-from … --year-to …`.
+- **Quantitative** (duration, track count) → the catalog has no duration filter of its own;
+  compose it yourself: shortlist candidates categorically, then `tidalist tracklist --master
+  <id>` per candidate, and filter by the returned track lengths.
+- **Subjective** ("dark", "best", "the canonical records") → your judgment. No catalog query
+  resolves canonicity or mood; this is the irreducibly-LLM part of the generation step.
+
+**Generate in two passes:**
+
+- **4A (always).** Propose candidates from your own knowledge — this is what answers the
+  subjective clauses, and for a well-known descriptor it's usually most of the list.
+- **4B (recall extension).** Sweep the catalog with `find-by-attributes` on the categorical
+  clauses (checking the exact style/genre string against Discogs vocabulary — a plausible
+  term like "Gothic Rock" can return `{"candidates":[]}` while "Goth Rock" is the real one;
+  try both spellings before concluding a style has no matches). Use the sweep two ways: to
+  **surface** candidates 4A's memory missed (the obscure or regional acts that never made it
+  into general knowledge), and to **corroborate** 4A's picks with a real
+  `discogs_master_id` — cite it in the item's `note:` as provenance. The sweep alone is not
+  sufficient: it returns every genuine tag match with no ranking by importance, so 4A's
+  judgment is still what filters it down to "canonical."
+
+Every generated item carries `note: descriptor: <the predicate clause(s) it satisfies>` —
+this is the auditable link back to the brief, the same role Scaruffi's provenance `note:`
+plays for a "(also …)" alternate.
+
+**After generation, nothing about the pipeline changes.** The generated items are ordinary
+named intent entries; Pass 3 (`lint-intent`) and Pass 4 (coverage / lint cleanliness /
+resolution spot-check) apply exactly as written above, with "coverage" now read against the
+generation plan's candidate count rather than a source's unit count. Curate (slice 4) needs
+no special handling — it never sees the predicate, only the materialized items and their
+provenance notes.
+
+See the worked example: `examples/descriptor-brief.md` (the NL predicate),
+`examples/descriptor-structure.md` (the structure-reading-as-generation-plan, including the
+actual `find-by-attributes` sweep commands and hit counts), and
+`examples/descriptor-intent.md` (eight canonical dark-gothic-post-punk albums, 1979–1986,
+every one independently corroborated in the mirror).
+
+---
+
 ## The structure-reading artifact
 
 Lightweight markdown, **human-confirmed, not machine-parsed** (`lint-intent` never reads
