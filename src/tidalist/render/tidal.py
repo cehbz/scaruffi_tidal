@@ -5,6 +5,8 @@ the Platform adapter. resolve() matches a recording to a track ISRC-first, then 
 closeness; emit() creates a playlist and adds the resolved tracks.
 """
 
+import unicodedata
+
 from ..core.ports import Platform
 from ..core.identifiers import TrackId
 from ..core.recording import Recording, Performance
@@ -132,6 +134,28 @@ def _album_source_compromise(album: Album, found: int, total: int,
                       f"assembled {found}/{total} tracks", note)
 
 
+# Curly quotes/apostrophes and the Unicode hyphen family defeat substring matching:
+# the materialized GM carries MB-sourced names/titles containing U+2019, U+2010/U+2011,
+# and curly double quotes. Mirrors core.NormalizeName's fold (Go side), extended for
+# U+2010 HYPHEN and curly double-quotes the GM actually carries (Go's fold omits U+2010).
+_PUNCT_FOLD = str.maketrans({
+    "’": "'", "‘": "'", "ʼ": "'",       # U+2019, U+2018, U+02BC -> '
+    "”": '"', "“": '"',                        # U+201D, U+201C -> "
+    "‐": "-", "‑": "-", "‒": "-", "–": "-",  # U+2010–U+2013 -> -
+})
+
+
+def _fold(s: str | None) -> str:
+    """Casefold + NFD-strip combining marks + fold curly punctuation and Unicode hyphens
+    to ASCII, so diacritic/curly/hyphen variants match. The single normalizer every
+    render string comparator routes through (title match, artist match, query norm)."""
+    if not s:
+        return ""
+    decomposed = unicodedata.normalize("NFD", s)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return stripped.translate(_PUNCT_FOLD).casefold().strip()
+
+
 def _strip_leading_the(s: str) -> str:
     return s[4:] if s.casefold().startswith("the ") else s
 
@@ -170,7 +194,7 @@ def _item(track: Track, quality: MatchQuality) -> PlatformItem:
 
 
 def _norm(s: str | None) -> str:
-    return (s or "").casefold().strip()
+    return _fold(s)
 
 
 def _artist_match_album(album: Album, catalog_artists: tuple[str, ...]) -> bool:
@@ -182,14 +206,16 @@ def _artist_match_album(album: Album, catalog_artists: tuple[str, ...]) -> bool:
 
 
 def _name_in_catalog(name: str, catalog_artists: tuple[str, ...]) -> bool:
-    n = name.casefold()
-    return any(n in ca.casefold() or ca.casefold() in n for ca in catalog_artists)
+    n = _fold(name)
+    if not n:
+        return False
+    return any(n in _fold(ca) or _fold(ca) in n for ca in catalog_artists)
 
 
 def _title_match_album(title: str, catalog_title: str) -> bool:
-    t = title.casefold()
-    ct = catalog_title.casefold()
-    return t in ct or ct in t
+    t = _fold(title)
+    ct = _fold(catalog_title)
+    return bool(t) and (t in ct or ct in t)
 
 
 _LIVE_MARKERS = ("(live", "[live", " live at ", " - live", "live in ", "live from", "unplugged")

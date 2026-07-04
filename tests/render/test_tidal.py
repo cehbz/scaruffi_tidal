@@ -6,7 +6,7 @@ from tidalist.core.catalog import Track, PlatformAlbum
 from tidalist.core.album import Album, TrackRef
 from tidalist.core.edition import EditionPreference, EditionPolicy
 from tidalist.core.render import MatchQuality, PlatformItem
-from tidalist.render.tidal import TidalRenderer
+from tidalist.render.tidal import TidalRenderer, _fold, _name_in_catalog, _title_match_album
 from tests.fakes import FakePlatform
 
 
@@ -375,3 +375,29 @@ def test_resolve_album_gap_reason_edition_scoring_none_candidate():
         )
     assert items == [] and comps == ()
     assert gap_reason == "edition-scoring: no candidate chosen"
+
+
+# --- Unicode/punctuation folding tests ---
+
+def test_fold_strips_diacritics_and_casefolds():
+    assert _fold("Brüggen") == "bruggen"
+
+
+def test_name_in_catalog_folds_u2010_hyphen():
+    # Golden credit "Yo‐Yo Ma" uses U+2010 HYPHEN; Tidal catalog uses ASCII hyphen.
+    assert _name_in_catalog("Yo‐Yo Ma", ("Yo-Yo Ma",)) is True
+
+
+def test_title_match_folds_curly_apostrophe():
+    # Golden side carries U+2019 RIGHT SINGLE QUOTATION MARK; catalog side ASCII '.
+    assert _title_match_album("Time’s Encomium", "Time's Encomium") is True
+
+
+def test_title_match_folds_curly_double_quotes():
+    # Golden side carries U+201C/U+201D curly double quotes; catalog side ASCII ".
+    assert _title_match_album('Songs “Live” at Home', 'Songs "Live" at Home') is True
+
+
+def test_title_match_folds_diacritics_casefold():
+    # Diacritics should be stripped and casefolded
+    assert _title_match_album('Le Divin Poème', "le divin poeme") is True
