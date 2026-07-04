@@ -309,6 +309,56 @@ func (m *MirrorDB) AlbumByRG(rgGID string) (AlbumInfo, bool, error) {
 	return info, true, nil
 }
 
+// AlbumByMaster returns the album identity of a Discogs master by id. ok=false
+// when the master is unknown. Discogs carries no secondary-type facts, so Traits
+// is always empty.
+func (m *MirrorDB) AlbumByMaster(masterID int64) (AlbumInfo, bool, error) {
+	var info AlbumInfo
+	var title string
+	var year sql.NullInt64
+	err := m.DB.QueryRow(
+		`SELECT title, year FROM dc.master WHERE id = ?`, masterID).Scan(&title, &year)
+	if err == sql.ErrNoRows {
+		return AlbumInfo{}, false, nil
+	}
+	if err != nil {
+		return AlbumInfo{}, false, err
+	}
+	info.DiscogsMasterID = core.DiscogsMasterID(masterID)
+	info.Title = title
+	if year.Valid {
+		info.Year = int(year.Int64)
+	}
+	if info.ArtistCredits, err = m.masterArtistCredits(masterID); err != nil {
+		return AlbumInfo{}, false, err
+	}
+	return info, true, nil
+}
+
+// masterArtistCredits returns the Discogs master's credited artists as RoleArtist
+// credits, in master_artist seq order.
+func (m *MirrorDB) masterArtistCredits(masterID int64) (core.Credits, error) {
+	rows, err := m.DB.Query(
+		`SELECT a.name
+		   FROM dc.master_artist ma
+		   JOIN dc.artist a ON a.id = ma.artist_id
+		  WHERE ma.master_id = ?
+		  ORDER BY ma.seq`, masterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cs core.Credits
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cs = append(cs, core.Credit{Role: core.RoleArtist, Name: name})
+	}
+	return cs, rows.Err()
+}
+
 // albumTraits maps the release-group's secondary types to the curation ReleaseTraits.
 func (m *MirrorDB) albumTraits(rgGID string) ([]core.ReleaseTrait, error) {
 	rows, err := m.DB.Query(

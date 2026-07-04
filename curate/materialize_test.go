@@ -231,6 +231,84 @@ func TestMaterializeAlbumEntryCreditsOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestMaterializeAlbumEntryMBNoUnverifiable pins the MB semantics: MB's
+// release_group_secondary_type_join model is complete, so an RG with zero
+// secondary-type rows is a POSITIVE observation ("neither live nor compilation"
+// — the album analog of PerfStudio), not an unobservable fact. rg-jbmd carries
+// no traits and the brief carries no_live; the report must NOT flag unverifiable.
+func TestMaterializeAlbumEntryMBNoUnverifiable(t *testing.T) {
+	_, rep := materializeFixture(t)
+	if len(rep.Items[0].Unverifiable) != 0 {
+		t.Errorf("MB-resolved album with zero secondary types must carry no unverifiable flags; got %v",
+			rep.Items[0].Unverifiable)
+	}
+}
+
+const discogsOnlyAlbumSelectionsJSON = `{
+  "name": "Discogs-only Test",
+  "brief": {"criteria": [{"type": "not_live"}]},
+  "selections": [
+    {"kind": "album", "discogs_master_id": 69017,
+     "provenance": {"source": "test", "note": "discogs-only pick"}}
+  ]
+}`
+
+// TestMaterializeAlbumEntryDiscogsOnly: a selection with no rg_mbid but a valid
+// discogs_master_id must resolve via catalog.AlbumByMaster, not fall through to
+// the absent stub (the ~5/267-item loss this task fixes). Discogs carries no
+// secondary-type facts, so the brief's not_live criterion admits (permissive)
+// and the report flags it unverifiable rather than a violation.
+func TestMaterializeAlbumEntryDiscogsOnly(t *testing.T) {
+	m := newTestMirror(t)
+	sel, err := ParseSelections([]byte(discogsOnlyAlbumSelectionsJSON))
+	if err != nil {
+		t.Fatalf("ParseSelections: %v", err)
+	}
+	doc, rep, err := Materialize(m, sel)
+	if err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	if rep.Items[0].Disposition != "resolved" {
+		t.Fatalf("disposition = %q, want resolved (Discogs-only must not fall to absent)", rep.Items[0].Disposition)
+	}
+	var e map[string]any
+	if err := json.Unmarshal(doc.Entries[0], &e); err != nil {
+		t.Fatal(err)
+	}
+	if e["discogs_master_id"] != float64(69017) {
+		t.Errorf("discogs_master_id = %v, want 69017", e["discogs_master_id"])
+	}
+	if _, hasMBID := e["mbid"]; hasMBID {
+		t.Errorf("Discogs-only entry must omit mbid; got %v", e["mbid"])
+	}
+	if e["artist"] != "Traffic" || e["title"] != "John Barleycorn Must Die" {
+		t.Errorf("artist/title = %v / %v", e["artist"], e["title"])
+	}
+	if e["year"] != float64(1970) {
+		t.Errorf("year = %v, want 1970", e["year"])
+	}
+	tl, ok := e["tracklist"].([]any)
+	if !ok || len(tl) == 0 {
+		t.Fatalf("tracklist must be non-empty, got %v", e["tracklist"])
+	}
+	if srcs, ok := e["sources"].([]any); !ok || len(srcs) != 1 || srcs[0] != "discogs" {
+		t.Errorf("sources = %v, want [discogs]", e["sources"])
+	}
+	v := e["verdict"].(map[string]any)
+	if v["admitted"] != true {
+		t.Errorf("no traits observed must admit (permissive-flagged); verdict = %v", v)
+	}
+	var flagged bool
+	for _, u := range rep.Items[0].Unverifiable {
+		if strings.Contains(u, "not_live") {
+			flagged = true
+		}
+	}
+	if !flagged {
+		t.Errorf("report unverifiable must flag not_live; got %v", rep.Items[0].Unverifiable)
+	}
+}
+
 func TestMaterializeEmitsPythonCriteriaTags(t *testing.T) {
 	doc, _ := materializeFixture(t)
 	b, err := json.Marshal(doc)

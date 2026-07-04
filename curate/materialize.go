@@ -12,6 +12,7 @@ package curate
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/cehbz/tidalist/catalog"
 	"github.com/cehbz/tidalist/core"
@@ -338,11 +339,31 @@ func Materialize(m *catalog.MirrorDB, sel Selections) (GoldenDoc, Report, error)
 }
 
 // m2AlbumEntry materializes an album selection: identity, artist credit, vintage,
-// traits, and the canonical tracklist, judged by the album-grain criteria.
+// traits, and the canonical tracklist, judged by the album-grain criteria. The
+// RGMBID path (MB: role-tagged credits, secondary-type traits) runs first and is
+// unchanged; a Discogs-only selection (no rg_mbid, a discogs_master_id) falls to
+// AlbumByMaster before the identity is declared absent — Discogs carries no
+// secondary-type facts, so its criteria run permissive-flagged (unverifiable).
 func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (json.RawMessage, ReportItem, error) {
 	info, ok, err := m.AlbumByRG(s.RGMBID)
 	if err != nil {
 		return nil, ReportItem{}, err
+	}
+	if s.RGMBID == "" && s.DiscogsMaster != 0 {
+		dinfo, dok, err := m.AlbumByMaster(s.DiscogsMaster)
+		if err != nil {
+			return nil, ReportItem{}, err
+		}
+		if dok {
+			tracks, err := m.TracklistByMaster(s.DiscogsMaster)
+			if err != nil {
+				return nil, ReportItem{}, err
+			}
+			// Discogs has no secondary-type model: traits are structurally
+			// unobservable, so trait criteria run permissive-flagged.
+			return buildAlbumEntry(s, "", dinfo, tracklistJSON(tracks), s.DiscogsMaster,
+				[]string{"discogs"}, nil, criteria, false)
+		}
 	}
 	if s.RGMBID == "" || !ok {
 		return absentEntry(s, "no album found")
@@ -351,11 +372,6 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 	tracks, err := m.TracklistByReleaseGroup(s.RGMBID)
 	if err != nil {
 		return nil, ReportItem{}, err
-	}
-	tl := make([]trackRefJSON, 0, len(tracks))
-	for _, t := range tracks {
-		tl = append(tl, trackRefJSON{Position: t.Position, Title: t.Title,
-			ISRC: string(t.ISRC), MBID: string(t.MBID), DurationS: t.DurationS})
 	}
 
 	rgCredits, err := m.ReleaseGroupCredits(core.MBID(s.RGMBID))
@@ -367,6 +383,33 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 		credits = append(credits, creditJSON{Artist: c.Name, Role: string(c.Role)})
 	}
 
+	dmid := int64(info.DiscogsMasterID)
+	if s.DiscogsMaster != 0 {
+		dmid = s.DiscogsMaster // the LLM's reconciled master wins over the FK hint
+	}
+	// MB's secondary-type model is complete: zero rows is a positive observation
+	// ("neither live nor compilation"), so trait criteria are always verifiable.
+	return buildAlbumEntry(s, s.RGMBID, info, tracklistJSON(tracks), dmid, []string{"musicbrainz"}, credits, criteria, true)
+}
+
+// tracklistJSON converts catalog tracks (MB or Discogs, same shape) to the GM
+// wire tracklist.
+func tracklistJSON(tracks []catalog.Track) []trackRefJSON {
+	tl := make([]trackRefJSON, 0, len(tracks))
+	for _, t := range tracks {
+		tl = append(tl, trackRefJSON{Position: t.Position, Title: t.Title,
+			ISRC: string(t.ISRC), MBID: string(t.MBID), DurationS: t.DurationS})
+	}
+	return tl
+}
+
+// buildAlbumEntry judges and emits an album entry once its identity is resolved
+// (by either AlbumByRG or AlbumByMaster): the album-grain criteria gate is common
+// to both sources. traitsObservable is the source's structural fact: MB's
+// secondary-type model is complete (zero rows = observed studio album), Discogs
+// has no trait model at all — only the latter runs permissive-flagged.
+func buildAlbumEntry(s Selection, mbid string, info catalog.AlbumInfo, tl []trackRefJSON, dmid int64,
+	sources []string, credits []creditJSON, criteria []core.Criterion, traitsObservable bool) (json.RawMessage, ReportItem, error) {
 	album := core.Album{
 		Credits:       info.ArtistCredits,
 		Title:         info.Title,
@@ -374,25 +417,25 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 		Traits:        info.Traits,
 	}
 	verdict := core.Judge(album, criteria)
-
-	dmid := int64(info.DiscogsMasterID)
-	if s.DiscogsMaster != 0 {
-		dmid = s.DiscogsMaster // the LLM's reconciled master wins over the FK hint
+	var unverifiable []string
+	if !traitsObservable {
+		unverifiable = unverifiableFlags(album, criteria)
 	}
+
 	traits := make([]string, 0, len(info.Traits))
 	for _, t := range info.Traits {
 		traits = append(traits, string(t))
 	}
 	entry := albumEntryJSON{
 		Kind:            "album",
-		MBID:            s.RGMBID,
+		MBID:            mbid,
 		Artist:          creditNames(info.ArtistCredits),
 		Title:           info.Title,
 		Year:            info.Year,
 		Traits:          traits,
 		Tracklist:       tl,
 		DiscogsMasterID: dmid,
-		Sources:         []string{"musicbrainz"},
+		Sources:         sources,
 		Credits:         credits,
 		Provenance:      s.Provenance,
 		Verdict:         verdictOf(verdict),
@@ -402,11 +445,16 @@ func m2AlbumEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 	if err != nil {
 		return nil, ReportItem{}, err
 	}
+	id := mbid
+	if id == "" && dmid != 0 {
+		id = strconv.FormatInt(dmid, 10)
+	}
 	return raw, ReportItem{
-		ID:          s.RGMBID,
-		Disposition: "resolved",
-		Admitted:    verdict.Admitted,
-		Violations:  verdict.Violations,
+		ID:           id,
+		Disposition:  "resolved",
+		Admitted:     verdict.Admitted,
+		Violations:   verdict.Violations,
+		Unverifiable: unverifiable,
 	}, nil
 }
 
@@ -466,18 +514,32 @@ func m2TrackEntry(m *catalog.MirrorDB, s Selection, criteria []core.Criterion) (
 }
 
 // unverifiableFlags reports the criteria that could not actually be judged against
-// observed facts: an unobservable fact admits (permissive) but is flagged.
-func unverifiableFlags(r core.Recording, criteria []core.Criterion) []string {
+// observed facts: an unobservable fact admits (permissive) but is flagged. Shared
+// across grains — recording-kind criteria (studio/performed_by) dispatch on
+// core.Recording, album-kind criteria (not_live/not_compilation) on core.Album;
+// a criterion no-ops (via the type switch) against the other grain, same as Judge.
+// Callers gate the album cases on structural observability (buildAlbumEntry's
+// traitsObservable): an MB album with empty Traits is an observed studio album,
+// not an unverifiable one, so only Discogs-sourced albums reach the album cases.
+func unverifiableFlags(item core.GoldenItem, criteria []core.Criterion) []string {
 	var out []string
 	for _, c := range criteria {
 		switch x := c.(type) {
 		case core.Studio:
-			if r.Performance == core.PerfUnknown {
+			if r, ok := item.(core.Recording); ok && r.Performance == core.PerfUnknown {
 				out = append(out, "studio: performance unobserved")
 			}
 		case core.PerformedBy:
-			if len(r.Credits) == 0 {
+			if r, ok := item.(core.Recording); ok && len(r.Credits) == 0 {
 				out = append(out, fmt.Sprintf("performed_by %s: no credits observed", x.Name))
+			}
+		case core.NoLive:
+			if a, ok := item.(core.Album); ok && len(a.Traits) == 0 {
+				out = append(out, "criterion unverifiable: not_live")
+			}
+		case core.NoCompilation:
+			if a, ok := item.(core.Album); ok && len(a.Traits) == 0 {
+				out = append(out, "criterion unverifiable: not_compilation")
 			}
 		}
 	}

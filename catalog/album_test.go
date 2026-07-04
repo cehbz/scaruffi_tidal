@@ -226,3 +226,39 @@ func TestAlbumByRG(t *testing.T) {
 		t.Errorf("unknown rg: ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 }
+
+// TestAlbumByMaster: the Discogs-only sibling of AlbumByRG, keyed by master id
+// instead of rg gid. Backs the materialize-golden branch for selections that
+// carry a discogs_master_id but no rg_mbid (the ~5/267 loss this fixes).
+func TestAlbumByMaster(t *testing.T) {
+	m := newTestMirror(t)
+	info, ok, err := m.AlbumByMaster(69017)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("master 69017 must resolve")
+	}
+	if info.MBID != "" {
+		t.Errorf("Discogs-only album must carry no MBID, got %q", info.MBID)
+	}
+	if info.DiscogsMasterID != 69017 {
+		t.Errorf("discogs master = %d, want 69017", info.DiscogsMasterID)
+	}
+	if info.Title != "John Barleycorn Must Die" {
+		t.Errorf("title = %q", info.Title)
+	}
+	if info.Year != 1970 {
+		t.Errorf("year = %d, want 1970", info.Year)
+	}
+	if !info.ArtistCredits.MatchesRole(core.RoleArtist, "Traffic") {
+		t.Errorf("artist credits %v missing Traffic", info.ArtistCredits)
+	}
+	if len(info.Traits) != 0 {
+		t.Errorf("Discogs masters carry no secondary-type facts, got traits %v", info.Traits)
+	}
+
+	if _, ok, err := m.AlbumByMaster(999999); err != nil || ok {
+		t.Errorf("unknown master: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+}
