@@ -46,7 +46,12 @@ func (c *attachConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := conn.(driver.ExecerContext).ExecContext(ctx, "ATTACH DATABASE '"+c.dcURI+"' AS dc", nil); err != nil {
+	ex, ok := conn.(driver.ExecerContext)
+	if !ok {
+		conn.Close()
+		return nil, fmt.Errorf("attach discogs: driver conn does not implement ExecerContext")
+	}
+	if _, err := ex.ExecContext(ctx, "ATTACH DATABASE '"+c.dcURI+"' AS dc", nil); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("attach discogs: %w", err)
 	}
