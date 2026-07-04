@@ -5,6 +5,7 @@ the Platform adapter. resolve() matches a recording to a track ISRC-first, then 
 closeness; emit() creates a playlist and adds the resolved tracks.
 """
 
+import re
 import unicodedata
 
 from ..core.ports import Platform
@@ -156,8 +157,31 @@ def _fold(s: str | None) -> str:
     return stripped.translate(_PUNCT_FOLD).casefold().strip()
 
 
-def _strip_leading_the(s: str) -> str:
-    return s[4:] if s.casefold().startswith("the ") else s
+_ARTICLES = ("the ", "a ", "an ")
+
+
+def _strip_leading_article(s: str) -> str:
+    f = s.casefold()
+    for art in _ARTICLES:
+        if f.startswith(art):
+            return s[len(art):]
+    return s
+
+
+# Compound classical titles differ in their work separator: golden uses "/", Tidal's
+# catalog uses ";" or "&". Split on any of them for segment-overlap matching.
+_TITLE_SEP = re.compile(r"\s*[/;&]\s*")
+
+
+def _title_segments(title: str) -> list[str]:
+    return [seg for seg in _TITLE_SEP.split(title) if seg.strip()]
+
+
+# A verbose enumerated title dilutes Tidal's top-N window; its leading segment (before
+# the first ':' '/' ';' '(' or ',') is a shorter, higher-ranking additive query. Precision
+# is still guarded by the (precise) survivor title match, so a broad short query is safe.
+def _short_title(title: str) -> str:
+    return re.split(r"[/:;(,]", title, maxsplit=1)[0].strip()
 
 
 # Anchor-query priority for role-tagged credits: conductor is most selective,
@@ -178,26 +202,46 @@ def _credit_forms(credit: Credit) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _anchor_queries(album: Album):
-    """Yield de-duplicated search queries for album, from most to least specific.
+_COMPOSER_ROLE = "composer"
+_MAX_CREDIT_QUERIES = 8
 
-    Role-tagged credits (conductor, then orchestra/chorus, then artist) each anchor a
-    query `f"{credit.artist} {album.title}"`; the compound-artist fallbacks (verbatim,
-    the-stripped, title-only) follow, unchanged."""
+
+def _anchor_queries(album: Album):
+    """Yield de-duplicated search queries for album, most to least specific.
+
+    Per anchor credit (conductor, then orchestra/chorus, then artist) and per Latin
+    variant of it: `"{form} {title}"`, a two-credit combo pairing the form with the
+    composer (for generic titles that omit the composer), and a short-title variant.
+    Credit-derived queries are capped at _MAX_CREDIT_QUERIES; the compound-artist and
+    title/short-title fallbacks always follow so the title-only fallback is guaranteed."""
     seen: set[str] = set()
     ranked_credits = sorted(
         (c for c in album.credits if c.role in _ANCHOR_ROLE_PRIORITY),
         key=lambda c: _ANCHOR_ROLE_PRIORITY[c.role],
     )
-    candidates = [f"{form} {album.title}"
-                  for c in ranked_credits for form in _credit_forms(c)]
-    candidates += [
-        f"{album.artist} {album.title}",
-        f"{_strip_leading_the(album.artist)} {album.title}",
-        album.title,
+    composer = next((c for c in album.credits if c.role == _COMPOSER_ROLE), None)
+    title = album.title
+    stitle = _short_title(title)
+    credit_qs: list[str] = []
+    for c in ranked_credits:
+        for form in _credit_forms(c):
+            credit_qs.append(f"{form} {title}")
+            if composer is not None and composer.role != c.role:
+                for cf in _credit_forms(composer):
+                    credit_qs.append(f"{form} {cf} {title}")
+            if stitle and stitle != title:
+                credit_qs.append(f"{form} {stitle}")
+    tail = [
+        f"{album.artist} {title}",
+        f"{_strip_leading_article(album.artist)} {title}",
+        title,
+        stitle if stitle and stitle != title else None,
     ]
-    for q in candidates:
-        if q not in seen:
+    for q in credit_qs[:_MAX_CREDIT_QUERIES] + tail:
+        if q is None:
+            continue
+        q = q.strip()
+        if q and q not in seen:
             seen.add(q)
             yield q
 
@@ -232,7 +276,20 @@ def _name_in_catalog(name: str, catalog_artists: tuple[str, ...]) -> bool:
 def _title_match_album(title: str, catalog_title: str) -> bool:
     t = _fold(title)
     ct = _fold(catalog_title)
-    return bool(t) and (t in ct or ct in t)
+    if t and (t in ct or ct in t):
+        return True
+    # Leading article: golden "A Polish Requiem" vs catalog "…: Polish Requiem".
+    ta = _fold(_strip_leading_article(title))
+    if ta and ta in ct:
+        return True
+    # Compound title: a shared work segment counts (golden "/" vs Tidal ";"/"&").
+    gsegs = [_fold(s) for s in _title_segments(title)]
+    csegs = [_fold(s) for s in _title_segments(catalog_title)]
+    if len(gsegs) > 1 or len(csegs) > 1:
+        for g in gsegs:
+            if g and any(g in c or c in g for c in csegs):
+                return True
+    return False
 
 
 _LIVE_MARKERS = ("(live", "[live", " live at ", " - live", "live in ", "live from", "unplugged")

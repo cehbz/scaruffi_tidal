@@ -418,3 +418,54 @@ def test_survivor_matches_via_credit_variant():
     album = Album(artist="Кирилл Петренко", title="Symphony No. 7",
                   credits=(Credit("Кирилл Петренко", "conductor", ("Kirill Petrenko",)),))
     assert _artist_match_album(album, ("Kirill Petrenko",)) is True
+
+
+# --- Task A3: compound-title segmentation, article strip, combined anchors ---
+
+def test_title_match_accepts_slash_vs_semicolon_segments():
+    # Index 3: golden "/" vs Tidal ";".
+    assert _title_match_album(
+        "Allegri: Miserere / Palestrina: Missa Papae Marcelli",
+        "Allegri: Miserere; Palestrina: Missa Papae Marcelli") is True
+
+
+def test_title_match_accepts_slash_vs_ampersand_segment():
+    # Index 142: "/" vs "&", with a composer prefix on the catalog side.
+    assert _title_match_album(
+        "Symphony no. 5 / Cello Concerto",
+        "Shostakovich: Symphony No. 5 & Cello Concerto No. 1") is True
+
+
+def test_title_match_accepts_leading_article_drop():
+    # Index 203: golden "A Polish Requiem" vs Tidal "Penderecki, K.: Polish Requiem".
+    assert _title_match_album("A Polish Requiem", "Penderecki, K.: Polish Requiem") is True
+
+
+def test_anchor_queries_combine_performer_and_composer_for_generic_title():
+    # Index 76: a bare title needs conductor + composer combined to disambiguate.
+    from tidalist.render.tidal import _anchor_queries
+    album = Album(artist="Wiener Philharmoniker", title="Symphonie No. 9",
+                  credits=(Credit("Carlo Maria Giulini", "conductor"),
+                           Credit("Anton Bruckner", "composer")))
+    queries = list(_anchor_queries(album))
+    assert "Carlo Maria Giulini Anton Bruckner Symphonie No. 9" in queries
+
+
+def test_anchor_queries_emit_short_title_for_verbose_title():
+    # Index 100: a shorter, less-diluting query leads with the title's head segment.
+    from tidalist.render.tidal import _anchor_queries
+    album = Album(artist="Mikhail Pletnev",
+                  title="Symphony no. 3 / Poème de l'Extase",
+                  credits=(Credit("Mikhail Pletnev", "conductor"),))
+    queries = list(_anchor_queries(album))
+    assert "Mikhail Pletnev Symphony no. 3" in queries
+
+
+def test_anchor_queries_bounded_and_title_fallback_survives():
+    from tidalist.render.tidal import _anchor_queries, _MAX_CREDIT_QUERIES
+    creds = tuple(Credit(f"Conductor {i}", "conductor") for i in range(12))
+    album = Album(artist="Orchestra X", title="Requiem", credits=creds)
+    queries = list(_anchor_queries(album))
+    # Credit-derived queries are capped; the title-only fallback still appears.
+    assert "Requiem" in queries
+    assert sum(1 for q in queries if q.endswith(" Requiem") and q != "Orchestra X Requiem") <= _MAX_CREDIT_QUERIES
