@@ -119,11 +119,13 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, []str
 	// When no composer is requested, or the requested name resolves to no known
 	// artist, the query is unconditioned — existing behavior is unchanged, and
 	// (b) below still filters by composer name/alias as before.
+	composerID, hasComposer, cerr := m.composerIDFor(composer)
+	if cerr != nil {
+		return nil, nil, cerr
+	}
 	var rows *sql.Rows
 	var err error
-	if composerID, ok, cerr := m.composerIDFor(composer); cerr != nil {
-		return nil, nil, cerr
-	} else if ok {
+	if hasComposer {
 		rows, err = m.DB.Query(
 			`SELECT DISTINCT f.rowid
 			   FROM work_fts f
@@ -159,7 +161,7 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, []str
 	// resolution (c) as the title-FTS candidates, unchanged. truncated signals the
 	// 50-id scan cap broke the alias scan short — surfaced as a warning so a
 	// caller knows resolution may be incomplete, never silently.
-	aliasIDs, truncated, err := m.workAliasCandidates(title)
+	aliasIDs, truncated, err := m.workAliasCandidates(title, composerID, hasComposer)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -290,24 +292,35 @@ func (m *MirrorDB) resolveWorkGroups(title, composer string) ([]WorkGroup, []str
 	return out, warnings, nil
 }
 
-// workAliasCandidates scans work_alias for aliases whose folded form begins
-// with the folded query title (strings.HasPrefix over foldWorkTitle). Real
-// mirror aliases carry punctuation the queries lack — e.g. alias "St. Matthew
-// Passion, BWV 244: Part I" vs query "St Matthew Passion" — so the comparison
-// folds punctuation out entirely, not just the core.NormalizeName diacritic/
-// case fold the Go credit matcher uses. A full table scan (158k rows on the
-// mirror) is milliseconds, ORDER BY work for deterministic candidate order
-// (resolveWorkGroups' candidate/root order is observable — Resolution
-// provenance depends on it); distinct work ids, capped at 50. truncated=true
-// when the cap broke the scan short of the full table — the caller surfaces
-// this as an incomplete-resolution warning rather than silently returning a
-// partial candidate set.
-func (m *MirrorDB) workAliasCandidates(title string) (out []int64, truncated bool, err error) {
+// workAliasCandidates scans work_alias for aliases whose folded form begins with the
+// folded query title (strings.HasPrefix over foldWorkTitle). When the composer resolves
+// (hasComposer), the scan is CONDITIONED on that composer's works — joining l_artist_work
+// (168) so only the composer's own aliased works are considered — driving the indexed
+// l_artist_work.entity0 -> work_alias.work join. That bounds candidates to one composer,
+// so same-prefix aliases of OTHER composers' works can never evict a relevant candidate:
+// no cap is needed on this path (truncated is always false), and it is safe because
+// resolveWorkGroups step (b) already drops every non-composer-credited alias hit. Without
+// a resolved composer, it falls back to the full table scan capped at 50 (truncated=true
+// when the cap broke the scan short — the caller surfaces an incomplete-resolution
+// warning). ORDER BY work keeps candidate order deterministic (Resolution provenance
+// depends on it); distinct work ids.
+func (m *MirrorDB) workAliasCandidates(title string, composerID int64, hasComposer bool) (out []int64, truncated bool, err error) {
 	want := foldWorkTitle(title)
 	if want == "" {
 		return nil, false, nil
 	}
-	rows, err := m.DB.Query(`SELECT work, name FROM work_alias ORDER BY work`)
+	var rows *sql.Rows
+	if hasComposer {
+		rows, err = m.DB.Query(
+			`SELECT DISTINCT wa.work, wa.name
+			   FROM l_artist_work law
+			   JOIN link l ON l.id = law.link AND l.link_type = ?
+			   JOIN work_alias wa ON wa.work = law.entity1
+			  WHERE law.entity0 = ?
+			  ORDER BY wa.work`, composerLinkType, composerID)
+	} else {
+		rows, err = m.DB.Query(`SELECT work, name FROM work_alias ORDER BY work`)
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -327,7 +340,7 @@ func (m *MirrorDB) workAliasCandidates(title string) (out []int64, truncated boo
 		}
 		seen[work] = true
 		out = append(out, work)
-		if len(out) >= 50 {
+		if !hasComposer && len(out) >= 50 {
 			truncated = true
 			break
 		}

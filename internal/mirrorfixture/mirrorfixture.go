@@ -470,6 +470,15 @@ var mbWorkAliasStmts = []string{
 	// TestResolveWorkGroupTitleWinsWhenBothSourcesReachSameRoot (catalog/work_test.go).
 	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
 		(3,301,'Missa Papae Marcelli: Kyrie','en',1)`,
+	// Composer-cap decoy (B1): a work whose English alias shares the "St Matthew
+	// Passion" prefix but is composed by Brahms (51), NOT Bach (64). A composer-less
+	// alias scan surfaces it (and, uncapped by other same-prefix floods, could evict
+	// a Bach candidate at the 50-id cap); a Bach-conditioned scan must never surface it.
+	`INSERT INTO work (id, gid, name, type, comment) VALUES
+		(358,'w-decoy-passion','Passion Setting (decoy)',1,'')`,
+	`INSERT INTO l_artist_work (id, link, entity0, entity1, link_order) VALUES (50,2,51,358,0)`,
+	`INSERT INTO work_alias (id, work, name, locale, type) VALUES
+		(5,358,'St. Matthew Passion, BWV 999: Part I','en',1)`,
 }
 
 // mbRiteTrapStmts (live-gate FIX 1, rr-task-5-report.md FINDING 1): a genuine,

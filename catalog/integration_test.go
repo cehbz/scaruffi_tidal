@@ -818,3 +818,69 @@ func TestIntegrationSingleShotResolution(t *testing.T) {
 	// assertions.
 	t.Run("kleiber_vpo_federated_regression", TestIntegrationResolvePerformanceDiscogsInteractive)
 }
+
+// TestIntegrationWorkAliasComposerConditioned exercises the composer-conditioned alias
+// harvest on the live mirror: a common English work title that floods work_alias
+// (>50 rows) must still resolve to its family WITHOUT the truncation warning, via the
+// composer join. Covers surname-first and native-script composer forms through the
+// alias-aware path (the forms the TODO calls out).
+func TestIntegrationWorkAliasComposerConditioned(t *testing.T) {
+	m := openRealMirror(t)
+	cases := []struct {
+		name, title, composer string
+	}{
+		{"english-title flood", "St Matthew Passion", "Johann Sebastian Bach"},
+		{"surname-first composer", "Music for Strings, Percussion and Celesta", "Bartók Béla"},
+		{"native-script composer", "The Rite of Spring", "Игорь Фёдорович Стравинский"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			groups, warnings, err := m.resolveWorkGroups(tc.title, tc.composer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(groups) == 0 {
+				t.Fatalf("no work-group resolved for (%q, %q)", tc.title, tc.composer)
+			}
+			for _, w := range warnings {
+				if strings.Contains(w, "truncated") {
+					t.Errorf("composer-conditioned path emitted a truncation warning: %q", w)
+				}
+			}
+			if d := time.Since(start); d > 30*time.Second {
+				t.Errorf("resolveWorkGroups took %v, want < 30s (indexed alias join; cold external-SSD cache measured ~5s, a planner regression is minutes)", d)
+			}
+		})
+	}
+
+	// EXPLAIN-safety: the composer-conditioned alias query must not full-scan work_alias.
+	bachID, ok, err := m.composerIDFor("Johann Sebastian Bach")
+	if err != nil || !ok {
+		t.Fatalf("composerIDFor(Bach) = (%d,%v,%v)", bachID, ok, err)
+	}
+	rows, err := m.DB.Query(
+		`EXPLAIN QUERY PLAN
+		 SELECT DISTINCT wa.work, wa.name
+		   FROM l_artist_work law
+		   JOIN link l ON l.id = law.link AND l.link_type = ?
+		   JOIN work_alias wa ON wa.work = law.entity1
+		  WHERE law.entity0 = ? ORDER BY wa.work`, composerLinkType, bachID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(detail, "SCAN work_alias") {
+			t.Errorf("alias query full-scans work_alias: %q", detail)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+}

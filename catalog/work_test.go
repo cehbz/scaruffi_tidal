@@ -187,6 +187,47 @@ func TestResolveWorkGroupWorkAliasNeverSubstitutesSibling(t *testing.T) {
 	}
 }
 
+// TestWorkAliasCandidatesComposerConditioned: the Bach-conditioned alias harvest must
+// surface the Matthäus movements (354, 357) but exclude the same-prefix Brahms decoy
+// (358); the composer-less full scan must include all three. This is the cap's fix —
+// the composer join pre-applies step (b)'s filter, so an other-composer same-prefix
+// alias can never occupy (and, at the cap, evict) a candidate slot.
+func TestWorkAliasCandidatesComposerConditioned(t *testing.T) {
+	m := newTestMirror(t)
+	bachID, ok, err := m.composerIDFor("Johann Sebastian Bach")
+	if err != nil || !ok {
+		t.Fatalf("composerIDFor(Bach) = (%d,%v,%v)", bachID, ok, err)
+	}
+	cond, truncated, err := m.workAliasCandidates("St Matthew Passion", bachID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if truncated {
+		t.Error("composer-conditioned path must never report truncated")
+	}
+	has := func(ids []int64, want int64) bool {
+		for _, id := range ids {
+			if id == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(cond, 354) || !has(cond, 357) {
+		t.Errorf("conditioned = %v, want the Matthäus movements 354 and 357", cond)
+	}
+	if has(cond, 358) {
+		t.Errorf("conditioned = %v, must exclude the Brahms decoy 358", cond)
+	}
+	uncond, _, err := m.workAliasCandidates("St Matthew Passion", 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(uncond, 358) {
+		t.Errorf("composer-less scan = %v, expected to include the decoy 358", uncond)
+	}
+}
+
 // TestResolveWorkGroupsAscendsPastMidLevelPartToMatthausRoot (Task 2b): the
 // fixture's third Matthäus level (357, a 281-child of the mid-level part 354)
 // carries its own work_alias row, so workAliasCandidates surfaces BOTH 354 and
