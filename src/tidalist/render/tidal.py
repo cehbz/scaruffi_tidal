@@ -101,14 +101,30 @@ class TidalRenderer:
         for query in _anchor_queries(album):
             tried += 1
             hits = self._platform.search_albums(query)
-            survivors = [
-                c for c in hits
-                if _artist_match_album(album, c.artists)
-                and _title_match_album(album.title, c.title)
-            ]
+            survivors = [c for c in hits if self._survives(album, c)]
             if survivors:
                 return survivors, tried
         return [], tried
+
+    def _survives(self, album: Album, candidate) -> bool:
+        if not _title_match_album(album.title, candidate.title):
+            return False
+        if _artist_match_album(album, candidate.artists):
+            return True
+        # "Various Artists" is Tidal's album-level placeholder; the individual tracks may
+        # still be credited to the golden performers. One bounded extra fetch resolves it.
+        if _is_various_artists(candidate.artists):
+            return self._tracks_credit_match(album, candidate.id)
+        return False
+
+    def _tracks_credit_match(self, album: Album, album_id) -> bool:
+        forms = [album.artist]
+        for c in album.credits:
+            forms.extend(_credit_forms(c))
+        for track in self._platform.album_tracks(TrackId(album_id)):
+            if any(_name_in_catalog(f, track.artists) for f in forms):
+                return True
+        return False
 
     def emit(self, name: str, items: list[PlatformItem]) -> str:
         playlist = self._platform.create_playlist(name)
@@ -271,6 +287,13 @@ def _name_in_catalog(name: str, catalog_artists: tuple[str, ...]) -> bool:
     if not n:
         return False
     return any(n in _fold(ca) or _fold(ca) in n for ca in catalog_artists)
+
+
+_VARIOUS_ARTISTS = {"various artists", "various", "va"}
+
+
+def _is_various_artists(catalog_artists: tuple[str, ...]) -> bool:
+    return bool(catalog_artists) and all(_fold(a) in _VARIOUS_ARTISTS for a in catalog_artists)
 
 
 def _title_match_album(title: str, catalog_title: str) -> bool:

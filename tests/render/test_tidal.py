@@ -469,3 +469,38 @@ def test_anchor_queries_bounded_and_title_fallback_survives():
     # Credit-derived queries are capped; the title-only fallback still appears.
     assert "Requiem" in queries
     assert sum(1 for q in queries if q.endswith(" Requiem") and q != "Orchestra X Requiem") <= _MAX_CREDIT_QUERIES
+
+
+# --- Task A4: Various-Artists survivor acceptance via track-credit match ---
+
+def test_survivor_accepts_various_artists_when_track_credits_match():
+    # Index 215: album-level artist is "Various Artists"; the track is credited to the
+    # golden performers (comma-joined in one artist string, as Tidal exposes it).
+    candidate = _album(id="A-va", title="Eight Songs for a Mad King",
+                       artists=("Various Artists",))
+    album = Album(artist="Julius Eastman", title="Eight Songs for a Mad King",
+                  credits=(Credit("Julius Eastman", "artist"),))
+    cat = FakePlatform(
+        [], albums=[candidate],
+        album_track_map={"A-va": [_album_track(
+            "T1", "8 Songs For A Mad King",
+            artists=("Julius Eastman,Peter Maxwell Davies,Fires Of London",))]},
+    )
+    items, _, gap_reason = TidalRenderer(cat).resolve_album(album, EditionPolicy.default())
+    assert [i.ref for i in items] == ["T1"]
+    assert gap_reason is None
+
+
+def test_various_artists_rejected_when_no_track_credit_matches():
+    candidate = _album(id="A-va", title="Eight Songs for a Mad King",
+                       artists=("Various Artists",))
+    album = Album(artist="Julius Eastman", title="Eight Songs for a Mad King",
+                  credits=(Credit("Julius Eastman", "artist"),))
+    cat = FakePlatform(
+        [], albums=[candidate],
+        album_track_map={"A-va": [_album_track("T1", "Some Other Work",
+                                               artists=("Unrelated Ensemble",))]},
+    )
+    items, _, gap_reason = TidalRenderer(cat).resolve_album(album, EditionPolicy.default())
+    assert items == []
+    assert gap_reason is not None
