@@ -3,6 +3,8 @@ import json
 import pytest
 
 from tidalist.config import AppConfig
+from tidalist.core.catalog import Track
+from tidalist.core.diff import PlaylistDelta
 from tidalist.core.recording import Candidate, Credit, Recording, Performance
 from tidalist.core.criteria import Verdict
 from tidalist.core.provenance import Provenance
@@ -11,7 +13,7 @@ from tidalist.core.golden import GoldenEntry, GoldenPlaylist
 from tidalist.core.render import Rendering, RenderedEntry, PlatformItem, MatchQuality
 from tidalist.core.spec import to_golden
 from tidalist import cli
-from tests.fakes import FakeMetadataProvider, FakeRenderer
+from tests.fakes import FakeMetadataProvider, FakePlatform, FakeRenderer
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -196,3 +198,92 @@ def test_main_run_pipeline_curates_then_publishes(tmp_path, capsys):
 def test_main_unknown_command_exits():
     with pytest.raises(SystemExit):
         cli.main(["frobnicate"])
+
+
+# --- diff verb -----------------------------------------------------------------
+
+def _diff_rendering_records():
+    return [
+        {"index": 0, "golden": {"title": "Glad", "artist": "Traffic", "note": ""},
+         "items": [{"ref": "1", "title": "Glad", "artists": ["Traffic"], "isrc": None, "quality": "isrc"}],
+         "gap": False},
+        {"index": 1, "golden": {"title": "Obscure", "artist": "Traffic", "note": ""},
+         "items": [], "gap": True},
+    ]
+
+
+def _write_rendering_jsonl(tmp_path):
+    path = tmp_path / "rendering.jsonl"
+    lines = [json.dumps(r) for r in _diff_rendering_records()]
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _existing_snapshot():
+    return [
+        {"id": "1", "title": "Glad", "isrc": None, "artist": "Traffic", "album": "Mr Fantasy"},
+        {"id": "2", "title": "Paper Sun", "isrc": None, "artist": "Traffic", "album": "Traffic"},
+    ]
+
+
+def test_diff_rendering_uses_existing_override_without_touching_platform():
+    existing = [Track(id="1", title="Glad", artists=("Traffic",))]
+    delta = cli.diff_rendering(_diff_rendering_records(), None, "PL1", existing, None)
+    assert isinstance(delta, PlaylistDelta)
+    assert delta.counts["fully_matched"] == 1
+    assert delta.counts["gap"] == 1
+
+
+def test_diff_rendering_fetches_live_playlist_when_no_existing_override():
+    live_track = Track(id="1", title="Glad", artists=("Traffic",))
+    platform = FakePlatform([], playlist_tracks_map={"PL1": [live_track]})
+    delta = cli.diff_rendering(_diff_rendering_records(), platform, "PL1", None, None)
+    assert delta.counts["fully_matched"] == 1
+
+
+def test_main_diff_with_existing_snapshot_prints_markdown_report(tmp_path, capsys):
+    rendering_path = _write_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_existing_snapshot()))
+    rc = cli.main(["diff", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "# Delta report" in out
+    assert "Paper Sun" in out  # unclaimed existing track
+
+
+def test_main_diff_without_existing_uses_platform_factory(tmp_path, capsys):
+    rendering_path = _write_rendering_jsonl(tmp_path)
+    live_track = Track(id="1", title="Glad", artists=("Traffic",))
+    platform = FakePlatform([], playlist_tracks_map={"PL1": [live_track]})
+    rc = cli.main(["diff", str(rendering_path), "--playlist-id", "PL1"],
+                  config_loader=lambda path=None: _cfg(tmp_path),
+                  platform_factory=lambda cfg: platform)
+    out = capsys.readouterr().out
+    assert rc == 0 and "# Delta report" in out
+
+
+def test_main_diff_writes_json_artifact(tmp_path):
+    rendering_path = _write_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_existing_snapshot()))
+    json_out = tmp_path / "delta.json"
+    rc = cli.main(["diff", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path), "--json", str(json_out)])
+    assert rc == 0
+    data = json.loads(json_out.read_text())
+    assert data["counts"]["fully_matched"] == 1
+    assert data["additions"] == []
+
+
+def test_main_diff_with_report_includes_curate_context(tmp_path, capsys):
+    rendering_path = _write_rendering_jsonl(tmp_path)
+    existing_path = tmp_path / "existing.json"
+    existing_path.write_text(json.dumps(_existing_snapshot()))
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps({"items": [{"disposition": "absent", "note": "bootleg"}]}))
+    rc = cli.main(["diff", str(rendering_path), "--playlist-id", "PL1",
+                  "--existing", str(existing_path), "--report", str(report_path)])
+    out = capsys.readouterr().out
+    assert rc == 0 and "## Curate-report context" in out

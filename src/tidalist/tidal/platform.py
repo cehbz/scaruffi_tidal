@@ -23,6 +23,9 @@ _RETRY_SLEEPS_S = (1, 4)
 # Patchable seam for tests.
 _SLEEP = time.sleep
 
+# tidalapi paginates Playlist.tracks() in chunks of up to 100 server-side.
+_PLAYLIST_PAGE_SIZE = 100
+
 
 def _clamp_query(query: str) -> str:
     if len(query) <= _MAX_QUERY_LEN:
@@ -82,6 +85,23 @@ class TidalPlatform:
 
     def album_tracks(self, album_id: TrackId) -> list[Track]:
         return [track_from_tidal(t) for t in self._session.album(album_id).tracks()]
+
+    def playlist_tracks(self, playlist: PlaylistId) -> list[Track]:
+        # tidalapi's Playlist.tracks(limit, offset) honors server-side pagination (a real
+        # playlist can hold 2000+ tracks); loop pages of _PLAYLIST_PAGE_SIZE until a short
+        # (or empty) page signals the end.
+        pl = self._session.playlist(playlist)
+        out = []
+        offset = 0
+        while True:
+            page = pl.tracks(limit=_PLAYLIST_PAGE_SIZE, offset=offset)
+            if not page:
+                break
+            out.extend(page)
+            if len(page) < _PLAYLIST_PAGE_SIZE:
+                break
+            offset += _PLAYLIST_PAGE_SIZE
+        return [track_from_tidal(t) for t in out]
 
     def album_editions(self, album_id: TrackId) -> list[PlatformAlbum]:
         try:

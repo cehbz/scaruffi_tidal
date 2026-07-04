@@ -23,6 +23,16 @@ def test_fake_catalog_create_and_add():
     assert cat.playlists[pid] == ["1", "2"]
 
 
+def test_fake_catalog_playlist_tracks_returns_seeded_tracks():
+    t = Track(id="1", title="Glad", artists=("Traffic",))
+    cat = FakePlatform([], playlist_tracks_map={"PL1": [t]})
+    assert cat.playlist_tracks("PL1") == [t]
+
+
+def test_fake_catalog_playlist_tracks_unknown_id_returns_empty():
+    assert FakePlatform([]).playlist_tracks("nonexistent") == []
+
+
 def test_fake_metadata_provider_albums_for_returns_seeded_album():
     album = Album(artist="Talk Talk", title="Spirit of Eden")
     candidate = Candidate(artist="Talk Talk", title="Spirit of Eden")

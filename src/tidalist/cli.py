@@ -1,9 +1,10 @@
 """tidalist CLI: curate a golden playlist, review it, render and publish to a platform.
 
-Presentation only — the domain use cases (curate, render, publish) live in core. Verbs
-operate on files: `curate` turns an intent JSON into a golden JSON; `review` prints it;
-`render` resolves it onto the platform (no write); `publish` creates the playlist; `run`
-chains curate → render → publish.
+Presentation only — the domain use cases (curate, render, publish, diff) live in core.
+Verbs operate on files: `curate` turns an intent JSON into a golden JSON; `review` prints
+it; `render` resolves it onto the platform (no write); `publish` creates the playlist;
+`diff` compares a rendering against an existing platform playlist; `run` chains
+curate → render → publish.
 """
 
 import argparse
@@ -12,6 +13,8 @@ import sys
 from pathlib import Path
 
 from .config import AppConfig
+from .core.catalog import Track
+from .core.diff import PlaylistDelta, delta_to_dict, diff_playlist, format_delta
 from .core.golden import Curator
 from .core.render import render, publish, Rendering
 from .core.spec import to_golden, from_golden
@@ -78,6 +81,17 @@ def publish_golden(golden_data: dict, renderer) -> str:
     return publish(render(from_golden(golden_data), renderer), renderer)
 
 
+def diff_rendering(rendering_records: list[dict], platform, playlist_id: str,
+                    existing: list[Track] | None, report: dict | None) -> PlaylistDelta:
+    """Diff a parsed rendering against an existing platform playlist.
+
+    `existing`, when given, bypasses the live fetch (an offline snapshot); otherwise
+    the current tracks are fetched from `platform`.
+    """
+    tracks = existing if existing is not None else platform.playlist_tracks(playlist_id)
+    return diff_playlist(rendering_records, tracks, report)
+
+
 # --- adapter construction (composition root; touches real services) ----------
 
 def build_metadata(config: AppConfig):
@@ -96,10 +110,17 @@ def build_renderer(config: AppConfig):
     return TidalRenderer(TidalPlatform(authenticate(config.session_file)))
 
 
+def build_platform(config: AppConfig):
+    from .tidal.session import authenticate
+    from .tidal.platform import TidalPlatform
+    return TidalPlatform(authenticate(config.session_file))
+
+
 # --- dispatch ----------------------------------------------------------------
 
 def main(argv=None, *, config_loader=AppConfig.load,
-         metadata_factory=build_metadata, renderer_factory=build_renderer, out=None) -> int:
+         metadata_factory=build_metadata, renderer_factory=build_renderer,
+         platform_factory=build_platform, out=None) -> int:
     out = out or sys.stdout
     args = _parser().parse_args(argv)
 
@@ -124,6 +145,22 @@ def main(argv=None, *, config_loader=AppConfig.load,
         ref = publish(rendering, renderer)
         print(format_rendering(rendering), file=out)
         print(f"published: {ref}", file=out)
+        return 0
+
+    if args.command == "diff":
+        rendering_records = _read_jsonl(args.rendering)
+        report = _read_json(args.report) if args.report else None
+        if args.existing:
+            existing = _tracks_from_snapshot(_read_json(args.existing))
+            platform = None
+        else:
+            existing = None
+            platform = platform_factory(config_loader(args.config))
+        delta = diff_rendering(rendering_records, platform, args.playlist_id, existing, report)
+        print(format_delta(delta), file=out)
+        if args.json_out:
+            Path(args.json_out).write_text(
+                json.dumps(delta_to_dict(delta), indent=2, ensure_ascii=False))
         return 0
 
     if args.command == "run":
@@ -159,6 +196,15 @@ def _parser() -> argparse.ArgumentParser:
     pb = sub.add_parser("publish", help="resolve and create the platform playlist")
     pb.add_argument("golden", help="golden JSON path")
 
+    df = sub.add_parser("diff", help="diff a rendering against an existing platform playlist")
+    df.add_argument("rendering", help="rendering JSONL path (from `render_dump.py`)")
+    df.add_argument("--playlist-id", required=True, help="existing platform playlist id to diff against")
+    df.add_argument("--existing", default=None,
+                    help="existing-playlist snapshot JSON (bypasses the live fetch)")
+    df.add_argument("--report", default=None, help="curate-report JSON for additional context")
+    df.add_argument("--json", dest="json_out", default=None,
+                    help="write the delta JSON artifact here")
+
     run = sub.add_parser("run", help="curate → render → publish in one go")
     run.add_argument("intent", help="intent JSON path (or - for stdin)")
     run.add_argument("-o", "--output", default=None, help="also write the golden JSON here")
@@ -171,6 +217,17 @@ def _read_text(path: str) -> str:
 
 def _read_json(path: str) -> dict:
     return json.loads(_read_text(path))
+
+
+def _read_jsonl(path: str) -> list[dict]:
+    return [json.loads(line) for line in _read_text(path).splitlines() if line.strip()]
+
+
+def _tracks_from_snapshot(data: list[dict]) -> list[Track]:
+    """Convert an existing-playlist snapshot ([{id,title,isrc,artist,album}, ...]) to Tracks."""
+    return [Track(id=str(t["id"]), title=t["title"], artists=(t.get("artist") or "Unknown",),
+                  isrc=t.get("isrc"), album=t.get("album"))
+            for t in data]
 
 
 def _write_json(data: dict, output, out) -> None:

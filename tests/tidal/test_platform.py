@@ -26,11 +26,19 @@ class _FakeUser:
 
 
 class _FakePlaylist:
-    def __init__(self):
+    def __init__(self, tracks=()):
         self.added = []
+        self._tracks = list(tracks)
+        self.track_calls: list[tuple[int, int]] = []
 
     def add(self, ids):
         self.added.append(ids)
+
+    def tracks(self, limit=None, offset=0):
+        self.track_calls.append((limit, offset))
+        if limit is None:
+            return self._tracks[offset:]
+        return self._tracks[offset:offset + limit]
 
 
 def _tidal_album(id, name="John Barleycorn Must Die", artist="Traffic", year=1970, num_tracks=6):
@@ -191,6 +199,45 @@ def test_add_tracks_passes_string_ids():
     session = _FakeSession()
     TidalPlatform(session).add_tracks("PL1", ["1", "2"])
     assert session.pl.added == [["1", "2"]]
+
+
+# --- playlist_tracks ---
+
+def test_playlist_tracks_returns_all_tracks_on_a_single_page():
+    tracks = [_track(i, f"T{i}") for i in range(5)]
+    session = _FakeSession()
+    session.pl = _FakePlaylist(tracks)
+    out = TidalPlatform(session).playlist_tracks("PL1")
+    assert [t.title for t in out] == [f"T{i}" for i in range(5)]
+    assert [t.id for t in out] == [str(i) for i in range(5)]
+
+
+def test_playlist_tracks_pages_through_a_large_playlist():
+    """A real playlist can hold 2000+ tracks; the adapter must loop until a
+    short page signals the end, rather than trusting a single call."""
+    tracks = [_track(i, f"T{i}") for i in range(250)]
+    session = _FakeSession()
+    session.pl = _FakePlaylist(tracks)
+    out = TidalPlatform(session).playlist_tracks("PL1")
+    assert len(out) == 250
+    assert [t.title for t in out] == [f"T{i}" for i in range(250)]
+    assert session.pl.track_calls == [(100, 0), (100, 100), (100, 200)]
+
+
+def test_playlist_tracks_handles_exact_multiple_of_page_size():
+    """When the last page is exactly full, one more (empty) request confirms the end."""
+    tracks = [_track(i, f"T{i}") for i in range(200)]
+    session = _FakeSession()
+    session.pl = _FakePlaylist(tracks)
+    out = TidalPlatform(session).playlist_tracks("PL1")
+    assert len(out) == 200
+    assert session.pl.track_calls == [(100, 0), (100, 100), (100, 200)]
+
+
+def test_playlist_tracks_empty_playlist_returns_empty_list():
+    session = _FakeSession()
+    session.pl = _FakePlaylist([])
+    assert TidalPlatform(session).playlist_tracks("PL1") == []
 
 
 def test_search_albums_maps_to_catalog_album():
