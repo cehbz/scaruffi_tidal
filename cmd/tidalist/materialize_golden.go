@@ -11,7 +11,7 @@ import (
 )
 
 func newMaterializeGoldenCmd() *cobra.Command {
-	var output, reportPath string
+	var output, reportPath, reportMdPath string
 	cmd := &cobra.Command{
 		Use:   "materialize-golden [selections.json]",
 		Short: "Materialize LLM-chosen identities into the Golden Master + curate report",
@@ -49,6 +49,12 @@ func newMaterializeGoldenCmd() *cobra.Command {
 					return err
 				}
 			}
+			if reportMdPath != "" {
+				b := curate.ReportMarkdown(rep)
+				if err := os.WriteFile(reportMdPath, b, 0o644); err != nil {
+					return err
+				}
+			}
 			if output != "" {
 				b, err := json.MarshalIndent(doc, "", "  ")
 				if err != nil {
@@ -66,5 +72,6 @@ func newMaterializeGoldenCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "write the golden JSON here (default: stdout)")
 	cmd.Flags().StringVar(&reportPath, "report", "", "write the curate report JSON here")
+	cmd.Flags().StringVar(&reportMdPath, "report-md", "", "write the curate report markdown here")
 	return cmd
 }
