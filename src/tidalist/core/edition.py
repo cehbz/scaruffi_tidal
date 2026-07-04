@@ -1,10 +1,10 @@
 """Edition selection policy — a backend-agnostic preference over album editions.
 
-`markers` is an ordered provenance preference (e.g. Steven Wilson, then MoFi); a realizer
+`markers` is an ordered provenance preference (e.g. Steven Wilson, then MoFi); a renderer
 matches them, best-effort, against whatever an edition's representation exposes on its
 platform. `prefer_original` favors the canonical/earliest edition when no marker matches.
 A particular backend's blindness never changes this preference — it surfaces as a reported
-realization compromise, not a downgrade of the golden.
+rendering compromise, not a downgrade of the golden.
 """
 
 from dataclasses import dataclass

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Realize a golden JSON against real Tidal (read-only) and dump structured results.
+"""Render a golden JSON against real Tidal (read-only) and dump structured results.
 
 Writes one JSON line per golden entry to the output path as it goes (crash-safe,
 resumable by skipping already-dumped indices), so a long run over hundreds of
 albums loses nothing. No playlist is created.
 
-Usage: uv run python scripts/realize_dump.py gm.json realization.jsonl
+Usage: uv run python scripts/render_dump.py gm.json rendering.jsonl
 """
 
 import json
@@ -17,7 +17,7 @@ from tidalist.core.spec import from_golden
 from tidalist.core.recording import Recording
 from tidalist.core.album import Album
 from tidalist.core.edition import EditionPolicy
-from tidalist.cli import build_realizer
+from tidalist.cli import build_renderer
 
 
 def entry_ident(e):
@@ -49,7 +49,7 @@ def main():
     except FileNotFoundError:
         pass
 
-    realizer = build_realizer(AppConfig.load())
+    renderer = build_renderer(AppConfig.load())
     default_pref = EditionPolicy.default()
 
     out = open(out_path, "a")
@@ -64,11 +64,11 @@ def main():
             try:
                 gap_reason = None
                 if isinstance(e.item, Recording):
-                    pi, comps = realizer.resolve(e.item)
+                    pi, comps = renderer.resolve(e.item)
                     items = [pi] if pi is not None else []
                 else:
                     pref = e.edition if e.edition is not None else default_pref
-                    items, comps, gap_reason = realizer.resolve_album(e.item, pref)
+                    items, comps, gap_reason = renderer.resolve_album(e.item, pref)
                 rec["items"] = [{"ref": it.ref, "title": it.title,
                                  "artists": list(it.artists), "isrc": it.isrc,
                                  "quality": str(it.quality)} for it in items]

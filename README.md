@@ -1,7 +1,7 @@
 # tidalist
 
 Curate a platform-agnostic **golden playlist of albums and recordings**, then
-**realize** it onto a platform (Tidal now; Spotify / local files later).
+**render** it onto a platform (Tidal now; Spotify / local files later).
 
 Two decoupled stages:
 
@@ -10,7 +10,7 @@ Two decoupled stages:
    discover which albums and recordings exist and pin their identity (MBIDs); a brief
    discriminates; the result is an ordered, persisted **golden playlist** whose units
    are whole albums or single recordings — the durable product.
-2. **Realize** — each golden entry is mapped best-effort to playable items on a
+2. **Render** — each golden entry is mapped best-effort to playable items on a
    platform (an album expands to its tracks), producing a playlist plus a gap report
    for anything unavailable, and a note for any edition compromise.
 
@@ -42,7 +42,7 @@ discogs:
 EOF
 ```
 
-Tidal uses OAuth on the first `realize`/`publish` (a `link.tidal.com` URL to
+Tidal uses OAuth on the first `render`/`publish` (a `link.tidal.com` URL to
 approve); the session is cached at `~/.config/tidalist/tidal_session.json`.
 
 ## Use
@@ -62,12 +62,12 @@ uv run tidalist curate intent.json -o golden.json
 uv run tidalist review golden.json
 
 # 4. Resolve onto Tidal — see resolved tracks, gaps, and edition compromises, no write
-uv run tidalist realize golden.json
+uv run tidalist render golden.json
 
 # 5. Create the Tidal playlist
 uv run tidalist publish golden.json
 
-# Or chain curate -> realize -> publish:
+# Or chain curate -> render -> publish:
 uv run tidalist run intent.json -o golden.json
 ```
 
@@ -101,9 +101,9 @@ Per candidate:
   `not_live`) — model output is never eval'd. Criteria are type-aware: recording
   criteria are no-ops on albums and vice-versa.
 - **`edition`** — `{"markers": ["steven wilson"], "prefer_original": true}` overrides
-  the realize-time edition policy for an album. Editions are selected by **minimum
+  the render-time edition policy for an album. Editions are selected by **minimum
   weighted distance from the golden Album**: the golden carries a canonical tracklist
-  (ordered, ISRC-identified, from MusicBrainz), and realize picks the available edition
+  (ordered, ISRC-identified, from MusicBrainz), and render picks the available edition
   nearest it — tracklist overlap dominates, with title, year, and reissue/kind markers
   as further dimensions. A requested marker (Steven Wilson / MoFi) is the highest-
   weighted dimension, so it wins when present and is reported as a *compromise* when no
@@ -121,12 +121,12 @@ Ports & adapters around a pure, I/O-free domain core.
 ```
 src/tidalist/
   core/       domain: recording, album, catalog, criteria, edition, ranking, brief,
-              golden, realize (Realizer port + Realization), spec (JSON), ports, errors
+              golden, render (Renderer port + Rendering), spec (JSON), ports, errors
   metadata/   MetadataProvider adapters: musicbrainz, discogs (+ rate_limit)
-  realize/    Realizer adapters: tidal (composes the Catalog port)
+  render/     Renderer adapters: tidal (composes the Catalog port)
   tidal/      Tidal Catalog adapter + OAuth session
   nl/         the agent intent contract (parse_intent)
-  cli.py      verbs: curate, review, realize, publish, run
+  cli.py      verbs: curate, review, render, publish, run
   config.py   AppConfig
 ```
 
@@ -134,13 +134,13 @@ src/tidalist/
   providers discover albums and recordings, pin identity (MBIDs, release-group
   secondary types for comp/live), and attach the album's **canonical tracklist** (the
   distance reference); the Curator discriminates via the brief.
-- **Realizer** (`resolve` + `resolve_album` + `emit`) feeds the realize stage: the
-  Tidal realizer composes a Catalog, finds an anchor album by search, then enumerates
+- **Renderer** (`resolve` + `resolve_album` + `emit`) feeds the render stage: the
+  Tidal renderer composes a Catalog, finds an anchor album by search, then enumerates
   **every** edition via the artist's discography (Tidal search dedupes editions) and
   picks the one of minimum distance to the golden's canonical tracklist
-  (`Catalog.album_editions` + `core.realize.edition_distance`). Spotify / local-file /
-  torrent realizers are drop-in later — the port is ready; impls are built on demand.
-  (A local/torrent realizer with rich edition metadata can honor edition preferences
+  (`Catalog.album_editions` + `core.fidelity.edition_distance`). Spotify / local-file /
+  torrent renderers are drop-in later — the port is ready; impls are built on demand.
+  (A local/torrent renderer with rich edition metadata can honor edition preferences
   Tidal cannot.)
 - The domain core is stdlib-only frozen value objects; adapters never leak into it.
 

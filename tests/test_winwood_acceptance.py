@@ -1,13 +1,13 @@
 """Steve Winwood north-star end-to-end acceptance test.
 
 Exercises the full offline pipeline:
-    parse_intent → Curator.curate → realize → publish
+    parse_intent → Curator.curate → render → publish
 
 Proves that a mixed album+track intent:
   - admits real album and track entries in order
   - excludes covers (PerformedBy per-candidate criterion)
   - excludes compilations (NotCompilation brief criterion)
-  - realizes: albums expand to multiple tracks, tracks resolve to single items
+  - renders: albums expand to multiple tracks, tracks resolve to single items
   - publishes to a playlist reference
 """
 import json
@@ -15,11 +15,11 @@ import pathlib
 
 from tidalist.nl.intent import parse_intent
 from tidalist.core.golden import Curator
-from tidalist.core.realize import realize, publish, PlatformItem, MatchQuality
+from tidalist.core.render import render, publish, PlatformItem, MatchQuality
 from tidalist.core.recording import Recording, Credit, Performance, Kind
 from tidalist.core.album import Album, ReleaseTrait
 
-from tests.fakes import FakeMetadataProvider, FakeRealizer
+from tests.fakes import FakeMetadataProvider, FakeRenderer
 
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "winwood_intent.json"
@@ -104,7 +104,7 @@ def _build_metadata_provider() -> FakeMetadataProvider:
     return FakeMetadataProvider(recordings=recordings, albums=albums)
 
 
-def _build_realizer() -> FakeRealizer:
+def _build_renderer() -> FakeRenderer:
     """Seed platform items for admitted entries.
 
     Albums: each expands to 3 tracks (enough to verify expansion).
@@ -122,14 +122,14 @@ def _build_realizer() -> FakeRealizer:
         "The Low Spark of High Heeled Boys": (_album_tracks("The Low Spark of High Heeled Boys"), None),
         "Blind Faith": (_album_tracks("Blind Faith"), None),
         "Their First LP": (_album_tracks("Their First LP"), None),
-        # The Finer Things is NOT seeded — the compilation is rejected before realize sees it
+        # The Finer Things is NOT seeded — the compilation is rejected before render sees it
     }
     items = {
         "Gimme Some Lovin'": _platform_item("track-gsl", "Gimme Some Lovin'"),
         "Higher Love": _platform_item("track-hl", "Higher Love"),
-        # Valerie is NOT seeded — it will be rejected before realize sees it
+        # Valerie is NOT seeded — it will be rejected before render sees it
     }
-    return FakeRealizer(items=items, albums=albums)
+    return FakeRenderer(items=items, albums=albums)
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ def _build_realizer() -> FakeRealizer:
 # ---------------------------------------------------------------------------
 
 def test_winwood_end_to_end():
-    """Full offline pipeline: intent → golden → realization → publish."""
+    """Full offline pipeline: intent → golden → rendering → publish."""
 
     # --- parse intent -------------------------------------------------------
     with open(FIXTURE) as f:
@@ -219,15 +219,15 @@ def test_winwood_end_to_end():
     assert "Gimme Some Lovin'" in admitted_track_titles
     assert "Higher Love" in admitted_track_titles
 
-    # --- realize ------------------------------------------------------------
-    realizer = _build_realizer()
-    realization = realize(golden, realizer)
+    # --- render ------------------------------------------------------------
+    renderer = _build_renderer()
+    rendering = render(golden, renderer)
 
-    # realize only processes admitted entries (5 albums + 2 tracks = 7)
-    assert len(realization.entries) == 7
+    # render only processes admitted entries (5 albums + 2 tracks = 7)
+    assert len(rendering.entries) == 7
 
-    resolved = realization.resolved()
-    gaps = realization.gaps()
+    resolved = rendering.resolved()
+    gaps = rendering.gaps()
 
     # All 7 should resolve (no gaps expected — everything admitted was seeded)
     assert len(gaps) == 0, f"Unexpected gaps: {[g.item.title for g in gaps]}"
@@ -253,14 +253,14 @@ def test_winwood_end_to_end():
         )
 
     # --- publish ------------------------------------------------------------
-    ref = publish(realization, realizer)
+    ref = publish(rendering, renderer)
 
     assert ref is not None
     assert ref.startswith("playlist-")
 
     # Total items published: 5 albums × 3 tracks + 2 single tracks = 17
-    assert len(realizer.emitted) == 1
-    _, emitted_refs, emitted_ref = realizer.emitted[0]
+    assert len(renderer.emitted) == 1
+    _, emitted_refs, emitted_ref = renderer.emitted[0]
     assert emitted_ref == ref
     assert len(emitted_refs) == 17, (
         f"Expected 17 published items (5×3 album tracks + 2 single tracks), "

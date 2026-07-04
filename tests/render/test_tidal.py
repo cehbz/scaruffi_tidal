@@ -5,8 +5,8 @@ from tidalist.core.recording import Recording, Credit
 from tidalist.core.catalog import Track, PlatformAlbum
 from tidalist.core.album import Album, TrackRef
 from tidalist.core.edition import EditionPreference, EditionPolicy
-from tidalist.core.realize import MatchQuality, PlatformItem
-from tidalist.realize.tidal import TidalRealizer
+from tidalist.core.render import MatchQuality, PlatformItem
+from tidalist.render.tidal import TidalRenderer
 from tests.fakes import FakePlatform
 
 
@@ -24,7 +24,7 @@ def _track(id, title="Glad", artists=("Traffic",), isrc=None, album=None, durati
 def test_resolve_by_isrc_takes_precedence_with_isrc_quality():
     target = _track("T-isrc", isrc=ISRC("GB1"))
     cat = FakePlatform([target, _track("T-decoy")])
-    item, _ = TidalRealizer(cat).resolve(_rec(isrc=ISRC("GB1")))
+    item, _ = TidalRenderer(cat).resolve(_rec(isrc=ISRC("GB1")))
     assert item.ref == "T-isrc" and item.quality is MatchQuality.ISRC
 
 
@@ -32,12 +32,12 @@ def test_resolve_falls_back_to_closest_search_hit():
     right = _track("T-right", title="Glad", artists=("Traffic",))
     looser = _track("T-loose", title="Glad Rag Doll", artists=("Traffic",))
     cat = FakePlatform([looser, right])
-    item, _ = TidalRealizer(cat).resolve(_rec())
+    item, _ = TidalRenderer(cat).resolve(_rec())
     assert item.ref == "T-right" and item.quality is MatchQuality.STRONG
 
 
 def test_resolve_returns_none_when_search_finds_nothing():
-    item, comps = TidalRealizer(FakePlatform([])).resolve(_rec())
+    item, comps = TidalRenderer(FakePlatform([])).resolve(_rec())
     assert item is None and comps == ()
 
 
@@ -45,13 +45,13 @@ def test_resolve_prefers_closer_duration_among_equal_hits():
     a = _track("T-a", title="Glad", artists=("Traffic",), duration_s=200)
     b = _track("T-b", title="Glad", artists=("Traffic",), duration_s=386)
     cat = FakePlatform([a, b])
-    item, _ = TidalRealizer(cat).resolve(_rec(duration_s=386))
+    item, _ = TidalRenderer(cat).resolve(_rec(duration_s=386))
     assert item.ref == "T-b"
 
 
 def test_resolve_marks_a_title_mismatch_weak():
     only = _track("T-x", title="Glad Rag Doll", artists=("Traffic",))
-    item, _ = TidalRealizer(FakePlatform([only])).resolve(_rec())
+    item, _ = TidalRenderer(FakePlatform([only])).resolve(_rec())
     assert item.ref == "T-x" and item.quality is MatchQuality.WEAK
 
 
@@ -62,7 +62,7 @@ def test_resolve_substitutes_a_live_take_and_reports_the_compromise():
                     credits=(Credit("Traffic", "performer"),))
     live = _track("T-live", title="Dear Mr. Fantasy (Live)", artists=("Traffic",))
     cat = FakePlatform([live])
-    item, comps = TidalRealizer(cat).resolve(rec)
+    item, comps = TidalRenderer(cat).resolve(rec)
     assert item.ref == "T-live"
     assert len(comps) == 1
     assert comps[0].facet == "performance"
@@ -76,7 +76,7 @@ def test_resolve_prefers_right_song_live_over_wrong_song_studio():
     live = _track("T-live", title="Glad (Live)", artists=("Traffic",), duration_s=200)
     wrong = _track("T-wrong", title="Glad Rag Doll", artists=("Traffic",), duration_s=200)
     cat = FakePlatform([wrong, live])
-    item, comps = TidalRealizer(cat).resolve(rec)
+    item, comps = TidalRenderer(cat).resolve(rec)
     assert item.ref == "T-live"                       # right song wins over wrong-song studio
     assert any(c.facet == "performance" for c in comps)   # and the live substitution is reported
 
@@ -86,7 +86,7 @@ def test_resolve_studio_match_reports_no_compromise():
     rec = Recording(artist="Traffic", title="Glad", performance=Performance.STUDIO,
                     credits=(Credit("Traffic", "performer"),), duration_s=200)
     studio = _track("T-studio", title="Glad", artists=("Traffic",), duration_s=200)
-    item, comps = TidalRealizer(FakePlatform([studio])).resolve(rec)
+    item, comps = TidalRenderer(FakePlatform([studio])).resolve(rec)
     assert item.ref == "T-studio"
     assert comps == ()    # studio hit, performance unobserved -> no spurious compromise
 
@@ -99,7 +99,7 @@ def test_resolve_prefers_hi_res_among_tied_hits():
     lossy = replace(lossy, audio_quality="LOW")
     hires = replace(hires, audio_quality="HI_RES_LOSSLESS")
     cat = FakePlatform([lossy, hires])
-    item, _ = TidalRealizer(cat).resolve(_rec(duration_s=200))
+    item, _ = TidalRenderer(cat).resolve(_rec(duration_s=200))
     assert item.ref == "T-hires"     # quality beats the lexicographically-smaller "T-aaa"
 
 
@@ -107,7 +107,7 @@ def test_emit_creates_a_playlist_and_adds_the_item_refs():
     cat = FakePlatform([])
     items = [PlatformItem(ref="T1", title="Glad", artists=("Traffic",)),
              PlatformItem(ref="T2", title="Dear Mr Fantasy", artists=("Traffic",))]
-    ref = TidalRealizer(cat).emit("Winwood", items)
+    ref = TidalRenderer(cat).emit("Winwood", items)
     assert cat.playlists[ref] == ["T1", "T2"]
 
 
@@ -133,7 +133,7 @@ def test_resolve_album_drops_wrong_artist():
         albums=[wrong_artist],
         album_track_map={"A-wrong": [_album_track("T1", "Glad")]},
     )
-    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(
+    items, compromise, gap_reason = TidalRenderer(cat).resolve_album(
         _domain_album(), EditionPolicy.default()
     )
     assert items == []
@@ -153,7 +153,7 @@ def test_resolve_album_picks_original_over_deluxe():
         albums=[deluxe, original],
         album_track_map={"A-orig": tracks, "A-deluxe": tracks[:1]},
     )
-    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(
+    items, compromise, gap_reason = TidalRenderer(cat).resolve_album(
         _domain_album(), EditionPolicy.default()
     )
     assert [i.ref for i in items] == ["T1", "T2"]
@@ -173,13 +173,13 @@ def test_resolve_album_returns_tracks_in_order():
         albums=[album],
         album_track_map={"A1": ordered_tracks},
     )
-    items, _, _ = TidalRealizer(cat).resolve_album(_domain_album(), EditionPolicy.default())
+    items, _, _ = TidalRenderer(cat).resolve_album(_domain_album(), EditionPolicy.default())
     assert [i.ref for i in items] == ["T1", "T2", "T3"]
 
 
 def test_resolve_album_returns_empty_when_nothing_matches():
     cat = FakePlatform([], albums=[], album_track_map={})
-    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(
+    items, compromise, gap_reason = TidalRenderer(cat).resolve_album(
         _domain_album(), EditionPolicy.default()
     )
     assert items == []
@@ -232,7 +232,7 @@ def test_resolve_album_prefers_edition_nearest_golden_tracklist():
             anchor_id: [ed10, ed22],
         },
     )
-    items, compromise, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, compromise, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
     assert [i.ref for i in items] == [f"T{n}" for n in range(1, 11)]
     assert all(i.quality is MatchQuality.STRONG for i in items)
     assert gap_reason is None
@@ -254,7 +254,7 @@ def test_resolve_album_multi_query_finds_via_the_stripped_artist():
         albums=[anchor],
         album_track_map={"A1": tracks},
     )
-    items, _, _ = TidalRealizer(cat).resolve_album(the_traffic_album, EditionPolicy.default())
+    items, _, _ = TidalRenderer(cat).resolve_album(the_traffic_album, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1", "T2"]
 
 
@@ -269,7 +269,7 @@ def test_resolve_album_title_only_query_finds_anchor_when_artist_queries_fail():
     cat = FakePlatform([], albums=[anchor],
                       album_track_map={"A1": [_album_track("T1", "Glad")]})
     album = Album(artist="unknown traffic", title="John Barleycorn Must Die")
-    items, _, _ = TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
+    items, _, _ = TidalRenderer(cat).resolve_album(album, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1"]
 
 
@@ -285,7 +285,7 @@ def test_resolve_album_editions_empty_falls_back_to_survivors():
         albums=[original],
         album_track_map={"A-orig": tracks},
     )
-    items, _, _ = TidalRealizer(cat).resolve_album(_domain_album(), EditionPolicy.default())
+    items, _, _ = TidalRenderer(cat).resolve_album(_domain_album(), EditionPolicy.default())
     assert [i.ref for i in items] == ["T1"]
 
 
@@ -300,7 +300,7 @@ def test_resolve_album_assembles_from_tracks_when_album_absent():
     t1 = _album_track("T1", "Frownland", artists=("Captain Beefheart",))
     t3 = _album_track("T3", "Dachau Blues", artists=("Captain Beefheart",))
     cat = FakePlatform([t1, t3], albums=[])      # search_albums empty -> assembly path
-    items, comps, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1", "T3"]
     assert len(comps) == 1 and comps[0].facet == "album-source"
     assert "2/3" in comps[0].note
@@ -311,7 +311,7 @@ def test_resolve_album_assembles_from_tracks_when_album_absent():
 def test_resolve_album_gaps_when_no_tracks_assemble():
     golden = Album(artist="X", title="Absent Album", tracklist=(_track_ref(1, "Nope"),))
     cat = FakePlatform([], albums=[])
-    items, comps, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
     assert items == [] and comps == ()
     assert gap_reason == "track-fallback: 0/1 tracks found"
 
@@ -319,7 +319,7 @@ def test_resolve_album_gaps_when_no_tracks_assemble():
 def test_resolve_album_no_tracklist_gaps():
     golden = Album(artist="X", title="Absent Album")   # no tracklist -> cannot assemble
     cat = FakePlatform([], albums=[])
-    items, comps, gap_reason = TidalRealizer(cat).resolve_album(golden, EditionPolicy.default())
+    items, comps, gap_reason = TidalRenderer(cat).resolve_album(golden, EditionPolicy.default())
     assert items == [] and comps == ()
     assert gap_reason == "no-edition-matched: tried 2 anchor queries, 0 survivors"
 
@@ -344,7 +344,7 @@ def test_anchor_queries_prefers_conductor_credit_first():
     album = Album(artist="Wiener Philharmoniker", title="Symphony No. 5",
                   credits=(Credit("Carlos Kleiber", "conductor"),))
     cat = _QuerySpyPlatform([], albums=[])
-    TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
+    TidalRenderer(cat).resolve_album(album, EditionPolicy.default())
     assert cat.album_queries[0] == "Carlos Kleiber Symphony No. 5"
 
 
@@ -356,7 +356,7 @@ def test_resolve_album_survivor_matches_via_credit_name():
                   credits=(Credit("Wiener Philharmoniker", "orchestra"),))
     cat = FakePlatform([], albums=[candidate],
                        album_track_map={"A1": [_album_track("T1", "Allegro con brio")]})
-    items, _, gap_reason = TidalRealizer(cat).resolve_album(album, EditionPolicy.default())
+    items, _, gap_reason = TidalRenderer(cat).resolve_album(album, EditionPolicy.default())
     assert [i.ref for i in items] == ["T1"]
     assert gap_reason is None
 
@@ -369,8 +369,8 @@ def test_resolve_album_gap_reason_edition_scoring_none_candidate():
     anchor = _album(id="A1", title="John Barleycorn Must Die", artists=("Traffic",))
     cat = FakePlatform([], albums=[anchor],
                        album_track_map={"A1": [_album_track("T1", "Glad")]})
-    with patch("tidalist.realize.tidal.choose", return_value=(None, ())):
-        items, comps, gap_reason = TidalRealizer(cat).resolve_album(
+    with patch("tidalist.render.tidal.choose", return_value=(None, ())):
+        items, comps, gap_reason = TidalRenderer(cat).resolve_album(
             _domain_album(), EditionPolicy.default()
         )
     assert items == [] and comps == ()

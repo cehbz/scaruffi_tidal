@@ -3,7 +3,7 @@ from dataclasses import dataclass as _dc
 import pytest
 
 from tidalist.core.fidelity import (
-    Compromise, PlatformCandidate, realize_distance, choose,
+    Compromise, PlatformCandidate, render_distance, choose,
     IdentityFacet, W_FUZZY_TITLE, W_FUZZY_ARTIST, W_FUZZY_DUR, W_PERFORMANCE,
     EditionFacet, edition_distance,
 )
@@ -24,11 +24,11 @@ class _FixedFacet:
         return Compromise("fixed", "x", "y", self.note) if self.note else None
 
 
-def test_realize_distance_sums_weighted_facets():
+def test_render_distance_sums_weighted_facets():
     cand = PlatformCandidate(ref="A", title="t")
     g = Recording(artist="a", title="t")
     facets = [_FixedFacet(table={"A": 2.0}), _FixedFacet(table={"A": 3.0})]
-    assert realize_distance(g, cand, facets) == 5.0
+    assert render_distance(g, cand, facets) == 5.0
 
 
 def test_choose_returns_min_distance_candidate_and_its_compromises():
@@ -244,7 +244,7 @@ def test_choose_quality_tiebreak_picks_hires_on_a_tie():
     pref = QualityPreference()
     lossy = PlatformCandidate(ref="aaa", title="t", audio_quality="LOW")
     hires = PlatformCandidate(ref="hires", title="t", audio_quality="HI_RES_LOSSLESS")
-    # No facets => realize_distance 0 for both => the quality tiebreak decides.
+    # No facets => render_distance 0 for both => the quality tiebreak decides.
     chosen, _ = choose(g, [lossy, hires], [], tiebreak=lambda c: (pref.tiebreak(c), c.ref))
     assert chosen.ref == "hires"
 

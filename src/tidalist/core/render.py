@@ -1,7 +1,7 @@
-"""The realize stage: map a golden playlist onto one platform, best-effort.
+"""The render stage: map a golden playlist onto one platform, best-effort.
 
-A `Realizer` resolves a recording to a platform item (ISRC-first, then closeness) and
-emits a playlist. `realize` resolves every admitted golden entry into a `Realization`
+A `Renderer` resolves a recording to a platform item (ISRC-first, then closeness) and
+emits a playlist. `render` resolves every admitted golden entry into a `Rendering`
 (resolved items + gaps) without writing; `publish` then emits the resolved items. The
 two are separate so gaps can be reviewed before anything is created on the platform.
 """
@@ -40,7 +40,7 @@ class PlatformItem:
 
 
 @dataclass(frozen=True, slots=True)
-class RealizedEntry:
+class RenderedEntry:
     golden: GoldenEntry
     items: tuple[PlatformItem, ...] = ()
     compromises: tuple[Compromise, ...] = ()
@@ -52,11 +52,11 @@ class RealizedEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class Realization:
+class Rendering:
     name: str
-    entries: tuple[RealizedEntry, ...]
+    entries: tuple[RenderedEntry, ...]
 
-    def resolved(self) -> tuple[RealizedEntry, ...]:
+    def resolved(self) -> tuple[RenderedEntry, ...]:
         return tuple(e for e in self.entries if not e.is_gap)
 
     def gaps(self) -> tuple[GoldenEntry, ...]:
@@ -75,39 +75,39 @@ class AlbumResolution(NamedTuple):
 
 
 @runtime_checkable
-class Realizer(Protocol):
+class Renderer(Protocol):
     def resolve(self, recording: Recording) -> tuple[PlatformItem | None, tuple[Compromise, ...]]: ...
     def resolve_album(self, album: Album, preference: EditionPreference) -> AlbumResolution: ...
     def emit(self, name: str, items: list[PlatformItem]) -> str: ...
 
 
-def realize(
+def render(
     golden: GoldenPlaylist,
-    realizer: Realizer,
+    renderer: Renderer,
     preference: EditionPreference = EditionPolicy.default(),
-) -> Realization:
+) -> Rendering:
     """Resolve every admitted golden entry to platform items (or a gap). No writes."""
-    realized = []
+    rendered = []
     for e in golden.entries:
         if not e.verdict.admitted:
             continue
         if isinstance(e.item, Recording):
-            pi, comps = realizer.resolve(e.item)
+            pi, comps = renderer.resolve(e.item)
             items = (pi,) if pi is not None else ()
-            realized.append(RealizedEntry(e, items=items, compromises=comps))
+            rendered.append(RenderedEntry(e, items=items, compromises=comps))
         elif isinstance(e.item, Album):
             effective_preference = e.edition if e.edition is not None else preference
-            items_list, comps, gap_reason = realizer.resolve_album(e.item, effective_preference)
-            realized.append(RealizedEntry(e, items=tuple(items_list), compromises=comps,
+            items_list, comps, gap_reason = renderer.resolve_album(e.item, effective_preference)
+            rendered.append(RenderedEntry(e, items=tuple(items_list), compromises=comps,
                                           gap_reason=gap_reason))
         else:
-            realized.append(RealizedEntry(e, items=(), compromises=()))
-    return Realization(golden.name, tuple(realized))
+            rendered.append(RenderedEntry(e, items=(), compromises=()))
+    return Rendering(golden.name, tuple(rendered))
 
 
-def publish(realization: Realization, realizer: Realizer) -> str:
+def publish(rendering: Rendering, renderer: Renderer) -> str:
     """Emit the resolved items to the platform; return the platform playlist reference."""
-    items = [item for e in realization.resolved() for item in e.items]
+    items = [item for e in rendering.resolved() for item in e.items]
     if not items:
-        raise PlatformError(f"nothing resolved to publish for '{realization.name}'")
-    return realizer.emit(realization.name, items)
+        raise PlatformError(f"nothing resolved to publish for '{rendering.name}'")
+    return renderer.emit(rendering.name, items)

@@ -2,7 +2,7 @@
 
 The canonical end-to-end NL brief. An `nl` front-end agent turns this into an
 intent JSON (`winwood_intent.json` was hand-built from it); `curate` then produces
-the golden, and `realize` maps it onto Tidal. Deliberately packs many requirement
+the golden, and `render` maps it onto Tidal. Deliberately packs many requirement
 types into one spec (whole albums, group membership, individual tracks, performer
 vs cover, edition preference).
 

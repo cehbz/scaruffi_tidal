@@ -36,7 +36,7 @@ class Credit:
 
 @dataclass(frozen=True, slots=True)
 class Recording:
-    """A specific performance. Identity: mbid (primary) + isrc (realization bridge);
+    """A specific performance. Identity: mbid (primary) + isrc (rendering bridge);
     artist/title/album/first_released/duration_s for human display and fuzzy fallback."""
     artist: str
     title: str

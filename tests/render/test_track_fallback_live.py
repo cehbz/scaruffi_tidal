@@ -33,7 +33,7 @@ def test_trout_mask_replica_assembles_from_compilations_live():
     from tidalist.metadata.mb_mirror import MusicBrainzMetadata
     from tidalist.tidal.session import authenticate
     from tidalist.tidal.platform import TidalPlatform
-    from tidalist.realize.tidal import TidalRealizer
+    from tidalist.render.tidal import TidalRenderer
 
     provider = MusicBrainzMetadata(MirrorDB(cfg.musicbrainz_db, cfg.discogs_db))
 
@@ -55,8 +55,8 @@ def test_trout_mask_replica_assembles_from_compilations_live():
         "(tried both 'Captain Beefheart' and 'Captain Beefheart & His Magic Band')"
     )
 
-    realizer = TidalRealizer(TidalPlatform(authenticate(cfg.session_file)))
-    items, comps, _ = realizer.resolve_album(album, EditionPolicy.default())
+    renderer = TidalRenderer(TidalPlatform(authenticate(cfg.session_file)))
+    items, comps, _ = renderer.resolve_album(album, EditionPolicy.default())
 
     # Must be a partial (or full) assembly — NOT a gap.
     assert items, (

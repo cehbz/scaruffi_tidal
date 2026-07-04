@@ -15,7 +15,7 @@ from ..core.catalog import Track, PlatformAlbum
 # 256 OK, 257 -> 500; the bound is characters, not UTF-8 bytes).
 _MAX_QUERY_LEN = 256
 
-# Measured 2026-07-02: a 6-minute live realize run lost 25/64 entries to transient
+# Measured 2026-07-02: a 6-minute live render run lost 25/64 entries to transient
 # Tidal-side HTTP 500s on /v1/search (short, valid queries that succeed minutes later).
 # Retry 5xx a bounded number of times so unattended multi-hour runs survive these windows.
 _RETRY_SLEEPS_S = (1, 4)

@@ -5,20 +5,20 @@ from tidalist.core.album import Album
 from tidalist.core.edition import EditionPolicy
 
 
-def _realizer_or_skip():
+def _renderer_or_skip():
     cfg = AppConfig.load()
     if not cfg.session_file.exists():
         pytest.skip("no Tidal session cached")
     from tidalist.tidal.session import authenticate
     from tidalist.tidal.platform import TidalPlatform
-    from tidalist.realize.tidal import TidalRealizer
-    return TidalRealizer(TidalPlatform(authenticate(cfg.session_file)))
+    from tidalist.render.tidal import TidalRenderer
+    return TidalRenderer(TidalPlatform(authenticate(cfg.session_file)))
 
 
 @pytest.mark.integration
 def test_resolve_album_picks_original_edition_live():
-    realizer = _realizer_or_skip()
-    items, _, _ = realizer.resolve_album(
+    renderer = _renderer_or_skip()
+    items, _, _ = renderer.resolve_album(
         Album(artist="Traffic", title="John Barleycorn Must Die"), EditionPolicy.default())
     assert items, "expected album tracks"
     assert any("Glad" in i.title for i in items)
@@ -27,8 +27,8 @@ def test_resolve_album_picks_original_edition_live():
 
 @pytest.mark.integration
 def test_resolve_album_empty_for_nonexistent_album_live():
-    realizer = _realizer_or_skip()
-    items, _, _ = realizer.resolve_album(
+    renderer = _renderer_or_skip()
+    items, _, _ = renderer.resolve_album(
         Album(artist="Zzqx Nonexistent Band", title="No Such Album Qwerty Plugh"),
         EditionPolicy.default())
     assert items == []

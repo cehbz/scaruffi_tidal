@@ -1,5 +1,5 @@
 """Fidelity facets: per-dimension distance + compromise between a golden item and a
-platform candidate. realize_distance sums the applicable facets; choose is the argmin.
+platform candidate. render_distance sums the applicable facets; choose is the argmin.
 Edition is the first facet ported here; identity/release-class/performance/quality follow.
 """
 
@@ -259,7 +259,7 @@ class Facet(Protocol):
                    cand: "PlatformCandidate") -> "Compromise | None": ...
 
 
-def realize_distance(golden, cand, facets) -> float:
+def render_distance(golden, cand, facets) -> float:
     return sum(f.weight * f.distance(golden, cand) for f in facets)
 
 
@@ -288,13 +288,13 @@ class QualityPreference:
 
 
 def choose(golden, candidates, facets, tiebreak=None):
-    """Pick the candidate of minimum realize_distance; break ties by `tiebreak`
+    """Pick the candidate of minimum render_distance; break ties by `tiebreak`
     (default: the candidate ref, for determinism); return it plus the winner's
     compromises."""
     if not candidates:
         return None, ()
     second = tiebreak if tiebreak is not None else (lambda c: c.ref)
-    chosen = min(candidates, key=lambda c: (realize_distance(golden, c, facets), second(c)))
+    chosen = min(candidates, key=lambda c: (render_distance(golden, c, facets), second(c)))
     comps = tuple(
         c for c in (f.compromise(golden, chosen) for f in facets) if c is not None
     )

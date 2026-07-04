@@ -74,8 +74,8 @@ class FakeMetadataProvider:
         return list(self._albums_by_title.get(candidate.title.casefold(), []))
 
 
-class FakeRealizer:
-    """Realizer port fake: resolves by recording title (missing => gap); records emits.
+class FakeRenderer:
+    """Renderer port fake: resolves by recording title (missing => gap); records emits.
 
     `albums` maps album title → ([PlatformItem, ...], tuple[Compromise, ...]);
     resolve_album returns the AlbumResolution 3-tuple (items, compromises, gap_reason=None).

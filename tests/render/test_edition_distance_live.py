@@ -2,7 +2,7 @@
 
 The golden carries MusicBrainz's canonical tracklist (the ~10-track standard
 "Mr. Fantasy"); Tidal album search returns only the 22-track mono+stereo deluxe,
-but the realizer enumerates every edition via the artist discography and picks the
+but the renderer enumerates every edition via the artist discography and picks the
 one nearest the golden tracklist — the original. This is the exact case surfaced
 during review (tidal.com/album/639224, the 10-track edition, vs the 22-track deluxe).
 """
@@ -28,7 +28,7 @@ def test_mr_fantasy_resolves_to_the_original_not_the_deluxe_live():
     from tidalist.metadata.mb_mirror import MusicBrainzMetadata
     from tidalist.tidal.session import authenticate
     from tidalist.tidal.platform import TidalPlatform
-    from tidalist.realize.tidal import TidalRealizer
+    from tidalist.render.tidal import TidalRenderer
 
     # Curate: the golden Album gains MB's canonical tracklist (the standard edition,
     # NOT the 22-track deluxe outlier).
@@ -38,10 +38,10 @@ def test_mr_fantasy_resolves_to_the_original_not_the_deluxe_live():
     assert 8 <= len(album.tracklist) <= 14, \
         f"canonical tracklist should be the ~10-track standard, got {len(album.tracklist)}"
 
-    # Realize: distance-from-golden must pick the original over the 22-track deluxe
+    # Render: distance-from-golden must pick the original over the 22-track deluxe
     # that Tidal album search surfaces first.
-    realizer = TidalRealizer(TidalPlatform(authenticate(cfg.session_file)))
-    items, _, _ = realizer.resolve_album(album, EditionPolicy.default())
+    renderer = TidalRenderer(TidalPlatform(authenticate(cfg.session_file)))
+    items, _, _ = renderer.resolve_album(album, EditionPolicy.default())
     assert items, "expected the album to resolve"
     assert len(items) <= 14, \
         f"resolved {len(items)} tracks — picked the deluxe, not the original"

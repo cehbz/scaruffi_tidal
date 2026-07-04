@@ -5,7 +5,7 @@ Providers discover recordings; the Curator discriminates. For each candidate it 
 the discovered recordings against the brief's criteria and chooses one by the
 recording-ranking, preferring admissible takes. A candidate that finds nothing, or whose
 takes all violate the brief, still yields an entry — with a rejected verdict — so the
-result is reviewable; realization later acts only on admitted entries.
+result is reviewable; rendering later acts only on admitted entries.
 """
 
 from __future__ import annotations

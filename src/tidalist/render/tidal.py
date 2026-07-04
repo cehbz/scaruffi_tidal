@@ -1,4 +1,4 @@
-"""TidalRealizer: the Realizer port for Tidal, built on the Platform port.
+"""TidalRenderer: the Renderer port for Tidal, built on the Platform port.
 
 It composes a Platform (TidalPlatform in production), so all tidalapi specifics stay in
 the Platform adapter. resolve() matches a recording to a track ISRC-first, then by
@@ -9,7 +9,7 @@ from ..core.ports import Platform
 from ..core.identifiers import TrackId
 from ..core.recording import Recording, Performance
 from ..core.catalog import Track
-from ..core.realize import PlatformItem, MatchQuality, AlbumResolution
+from ..core.render import PlatformItem, MatchQuality, AlbumResolution
 from ..core.fidelity import (
     PlatformCandidate, IdentityFacet, EditionFacet, PerformanceFacet, choose,
     recording_artist_match, Compromise, QualityPreference,
@@ -20,7 +20,7 @@ from ..core.album import Album, TrackRef
 _QUALITY_PREFERENCE = QualityPreference()
 
 
-class TidalRealizer:
+class TidalRenderer:
     def __init__(self, platform: Platform):
         self._platform = platform
 

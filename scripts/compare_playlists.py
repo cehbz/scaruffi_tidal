@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Diff a realization dump against an existing Tidal playlist snapshot.
+"""Diff a rendering dump against an existing Tidal playlist snapshot.
 
-Inputs: realization.jsonl (from realize_dump.py), existing-playlist.json (a
+Inputs: rendering.jsonl (from render_dump.py), existing-playlist.json (a
 track list snapshot), and the curate report (for absent/marginal context).
 Output: a markdown delta report on stdout.
 
@@ -86,8 +86,8 @@ def main():
 
     extra = [t for t in existing if str(t["id"]) not in matched_ids]
 
-    print("# Delta report: realized GM vs existing Tidal Scaruffi playlist\n")
-    print(f"- GM entries realized: {len(entries)}")
+    print("# Delta report: rendered GM vs existing Tidal Scaruffi playlist\n")
+    print(f"- GM entries rendered: {len(entries)}")
     for k in ("fully_matched", "partially_matched", "all_new_vs_existing" if False else "new_vs_existing", "gap", "not_admitted"):
         print(f"- {k}: {counts[k]}")
     print(f"- existing playlist tracks: {len(existing)}; matched by some entry: {len(matched_ids)}; unmatched (extra in existing): {len(extra)}\n")
@@ -98,7 +98,7 @@ def main():
             continue
         print(f"- [{status}] {g.get('artist','?')} — {g['title']}  (id-match {by_id}, fuzzy {by_fuzzy})  · {g.get('note','')[:80]}")
 
-    print("\n## Existing-playlist tracks no realized entry claimed (sample, first 60)\n")
+    print("\n## Existing-playlist tracks no rendered entry claimed (sample, first 60)\n")
     for t in extra[:60]:
         print(f"- {t.get('artist','?')} — {t['title']}  (album: {t.get('album','?')})")
     if len(extra) > 60:
